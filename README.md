@@ -1,3 +1,4 @@
+# Audio-platform
 # Home Audio FastAPI Backend with Supabase Integration
 
 A complete FastAPI backend for a home audio streaming platform with Supabase authentication and JWT verification.
@@ -71,10 +72,10 @@ The API uses JWT tokens for authentication with optional Supabase integration:
 ```bash
 curl -X POST "http://localhost:8000/api/v1/auth/create-token" \
   -H "Content-Type: application/json" \
-  -d '{
+  -d {
     "user_id": "123e4567-e89b-12d3-a456-426614174000",
     "email": "user@example.com"
-  }'
+  \}
 ```
 
 ### Using the Token
@@ -198,7 +199,7 @@ uvicorn app.main:app --reload --log-level debug
 ```bash
 curl -X POST "http://localhost:8000/api/v1/auth/create-token" \
   -H "Content-Type: application/json" \
-  -d '{"user_id": "test-user-123", "email": "test@example.com"}'
+  -d {"user_id": "test-user-123", "email": "test@example.com"}
 ```
 
 2. Use the token for protected endpoints:
