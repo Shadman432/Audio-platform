@@ -1,0 +1,352 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>My Streaming App</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      background: #111;
+      color: #fff;
+      margin: 0;
+      padding: 0;
+    }
+    h1, h2 {
+      margin-left: 20px;
+    }
+    .slider, .content, .continue {
+      display: flex;
+      overflow-x: auto;
+      gap: 15px;
+      padding: 20px;
+      scroll-behavior: smooth;
+    }
+    .slider::-webkit-scrollbar, .content::-webkit-scrollbar, .continue::-webkit-scrollbar {
+      height: 8px;
+    }
+    .slider::-webkit-scrollbar-track, .content::-webkit-scrollbar-track, .continue::-webkit-scrollbar-track {
+      background: #333;
+    }
+    .slider::-webkit-scrollbar-thumb, .content::-webkit-scrollbar-thumb, .continue::-webkit-scrollbar-thumb {
+      background: #666;
+      border-radius: 4px;
+    }
+    .card {
+      background: #222;
+      border-radius: 8px;
+      padding: 15px;
+      min-width: 200px;
+      flex-shrink: 0;
+      transition: transform 0.15s ease-out;
+      cursor: pointer;
+      will-change: transform;
+    }
+    .card:hover {
+      transform: scale(1.02);
+    }
+    .card .img-wrapper {
+      width: 100%;
+      height: 120px;
+      border-radius: 8px;
+      background: #333;
+      overflow: hidden;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .card img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      opacity: 0;
+      transition: opacity 0.5s ease;
+    }
+    .card img.loaded {
+      opacity: 1;
+    }
+    .card h4 {
+      margin: 10px 0 5px 0;
+      font-size: 14px;
+      color: #fff;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .card p {
+      margin: 5px 0;
+      font-size: 12px;
+      color: #aaa;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .login-box {
+      padding: 20px;
+      background: #222;
+      margin: 20px;
+      border-radius: 8px;
+    }
+    .login-box input {
+      width: 70%;
+      padding: 8px;
+      margin: 5px;
+      background: #333;
+      color: #fff;
+      border: 1px solid #555;
+      border-radius: 4px;
+    }
+    .login-box button {
+      padding: 8px 15px;
+      background: #4caf50;
+      color: white;
+      border: none;
+      border-radius: 4px;
+      cursor: pointer;
+    }
+    .login-box button:hover {
+      background: #45a049;
+    }
+    .user-input {
+      margin-top: 10px;
+    }
+    .progress-bar {
+      width: 100%;
+      background: #333;
+      border-radius: 4px;
+      overflow: hidden;
+      height: 8px;
+      margin-top: 5px;
+    }
+    .progress {
+      height: 100%;
+      background: linear-gradient(90deg, #4caf50, #8bc34a);
+      width: 0%;
+      transition: width 0.3s ease;
+    }
+    .rating {
+      display: inline-block;
+      background: #666;
+      color: #fff;
+      padding: 2px 6px;
+      border-radius: 3px;
+      font-size: 10px;
+      margin-top: 5px;
+    }
+    .error-msg {
+      color: #ff6b6b;
+      padding: 20px;
+      text-align: center;
+      background: #2a1a1a;
+      margin: 20px;
+      border-radius: 8px;
+      border-left: 4px solid #ff6b6b;
+    }
+    .loading {
+      text-align: center;
+      padding: 40px;
+      color: #aaa;
+    }
+  </style>
+</head>
+<body>
+  <h1 style="text-align:center;">🎬 My Streaming Home</h1>
+  
+  <!-- Bearer Token Input -->
+  <div class="login-box">
+    <label>Bearer Token: 
+      <input type="text" id="tokenInput" placeholder="Paste your JWT token here" />
+    </label>
+    <button onclick="setToken()">Set Token</button>
+    <p id="login-status"></p>
+  </div>
+
+  <!-- Slideshow Section -->
+  <h2>Featured</h2>
+  <div id="slideshow" class="slider">
+    <div class="loading">Loading slideshow...</div>
+  </div>
+
+  <!-- Content Categories Section -->
+  <h2>Categories</h2>
+  <div id="content" class="content">
+    <div class="loading">Loading content...</div>
+  </div>
+
+  <!-- Continue Watching Section -->
+  <h2>Continue Watching</h2>
+  <div id="continue" class="continue">
+    <div class="loading">Please set your token first</div>
+  </div>
+
+  <script>
+    const API_BASE = "http://localhost:8000/api/v1";
+    let token = null;
+    let currentUserId = null;
+
+    // Utility: Load image with fade-in
+    function loadImage(img) {
+      img.onload = () => img.classList.add("loaded");
+      img.onerror = () => {
+        img.src = "https://via.placeholder.com/200x120/333/fff?text=Error";
+        img.classList.add("loaded");
+      };
+    }
+
+    // Parse JWT
+    function parseJWT(token) {
+      try {
+        const base64Url = token.split('.')[1];
+        const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/');
+        const jsonPayload = decodeURIComponent(atob(base64).split('').map(function(c) {
+          return '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2);
+        }).join(''));
+        return JSON.parse(jsonPayload);
+      } catch {
+        return null;
+      }
+    }
+
+    // Set token
+    function setToken() {
+      const inputToken = document.getElementById("tokenInput").value.trim();
+      const statusEl = document.getElementById("login-status");
+      if (!inputToken) {
+        statusEl.innerHTML = "❌ Please provide a valid token";
+        statusEl.style.color = "#ff6b6b";
+        return;
+      }
+      const payload = parseJWT(inputToken);
+      if (!payload) {
+        statusEl.innerHTML = "❌ Invalid JWT token format";
+        statusEl.style.color = "#ff6b6b";
+        return;
+      }
+      const userId = payload.user_id || payload.sub || payload.id;
+      if (!userId) {
+        statusEl.innerHTML = "❌ No user ID found in token";
+        statusEl.style.color = "#ff6b6b";
+        return;
+      }
+      token = inputToken;
+      currentUserId = userId;
+      statusEl.innerHTML = `✅ Token set! User: ${userId.toString().substring(0, 8)}...`;
+      statusEl.style.color = "#4caf50";
+      loadContinue();
+    }
+
+    // Load Continue Watching
+    async function loadContinue() {
+      const container = document.getElementById("continue");
+      if (!token || !currentUserId) {
+        container.innerHTML = '<div class="error-msg">🔒 Please set your Bearer token first</div>';
+        return;
+      }
+      container.innerHTML = `<div class="loading">Loading your progress...</div>`;
+      try {
+        const res = await fetch(`${API_BASE}/continue/?user=${currentUserId}`, {
+          headers: { "Authorization": `Bearer ${token}` }
+        });
+        if (!res.ok) throw new Error("Failed to fetch");
+        const data = await res.json();
+        container.innerHTML = "";
+        if (!Array.isArray(data) || !data.length) {
+          container.innerHTML = '<div class="error-msg">No continue watching items</div>';
+          return;
+        }
+        data.forEach((item, index) => {
+          const progress = item.total_duration > 0 
+            ? Math.round((item.progress_seconds / item.total_duration) * 100) 
+            : 0;
+          const card = document.createElement("div");
+          card.className = "card";
+          card.innerHTML = `
+            <div class="img-wrapper" style="background:hsl(${(index*40)%360},50%,40%)">
+              <span>EP ${index+1}</span>
+            </div>
+            <h4>Story: ${item.story_id?.substring(0,8) || 'Unknown'}</h4>
+            <p>Episode: ${item.episode_id?.substring(0,8) || 'Unknown'}</p>
+            <div class="progress-bar"><div class="progress" style="width:${progress}%"></div></div>
+            <p style="color:#4caf50;font-weight:bold">${progress}% completed</p>
+          `;
+          container.appendChild(card);
+        });
+      } catch (err) {
+        container.innerHTML = `<div class="error-msg">⚠️ ${err.message}</div>`;
+      }
+    }
+
+    // Load Slideshow
+    async function loadSlideshow() {
+      const container = document.getElementById("slideshow");
+      try {
+        const res = await fetch(`${API_BASE}/slideshow/active`);
+        const data = await res.json();
+        container.innerHTML = "";
+        if (!data.length) {
+          container.innerHTML = '<div class="error-msg">No slideshow content</div>';
+          return;
+        }
+        data.sort((a,b) => (a.display_order||0)-(b.display_order||0))
+          .forEach((item, index) => {
+            const story = item.story || item;
+            const card = document.createElement("div");
+            card.className = "card";
+            card.innerHTML = `
+              <div class="img-wrapper">
+                <img src="${story.thumbnail_rect || story.thumbnail_responsive || ''}" 
+                     alt="${story.title||'Slideshow'}" loading="lazy">
+              </div>
+              <h4>${story.title || `Slideshow ${index+1}`}</h4>
+              <p>${story.description || story.genre || 'No description'}</p>
+            `;
+            container.appendChild(card);
+            const img = card.querySelector("img");
+            if (img) loadImage(img);
+          });
+      } catch (err) {
+        container.innerHTML = `<div class="error-msg">⚠️ ${err.message}</div>`;
+      }
+    }
+
+    // Load Content
+    async function loadContent() {
+      const container = document.getElementById("content");
+      try {
+        const res = await fetch(`${API_BASE}/content`);
+        const data = await res.json();
+        container.innerHTML = "";
+        if (!data.length) {
+          container.innerHTML = '<div class="error-msg">No content</div>';
+          return;
+        }
+        data.forEach((item, index) => {
+          const content = item.home_content_series || [item];
+          content.forEach(story => {
+            const card = document.createElement("div");
+            card.className = "card";
+            card.innerHTML = `
+              <div class="img-wrapper">
+                <img src="${story.thumbnail_square || story.thumbnail_rect || ''}" 
+                     alt="${story.title||'Content'}" loading="lazy">
+              </div>
+              <h4>${story.title || `Story ${index+1}`}</h4>
+              <p>${story.description || story.genre || item.category_name}</p>
+            `;
+            container.appendChild(card);
+            const img = card.querySelector("img");
+            if (img) loadImage(img);
+          });
+        });
+      } catch (err) {
+        container.innerHTML = `<div class="error-msg">⚠️ ${err.message}</div>`;
+      }
+    }
+
+    // Init
+    document.addEventListener("DOMContentLoaded", () => {
+      loadSlideshow();
+      loadContent();
+    });
+  </script>
+</body>
+</html>
