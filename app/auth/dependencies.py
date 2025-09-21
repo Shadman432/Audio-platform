@@ -36,7 +36,7 @@ async def get_current_active_user(
             headers={"WWW-Authenticate": "Bearer"},
         )
     
-    user = db.query(User).filter(User.id == token_data["id"]).first()
+    user = db.query(User).filter(User.user_id == token_data["id"]).first()
     if not user:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,

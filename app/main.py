@@ -24,8 +24,11 @@ from .services.cache_service import (
     refresh_home_series_cache,
     refresh_home_slideshow_cache,
 )
-from .services.search import SearchService # Ensure this is imported
+from .custom_json_response import CustomJSONResponse
 from .services.sync_service import SyncService # Import SyncService
+from .services.search import SearchService
+
+from .health_checks import check_redis_health, check_db_health, check_opensearch_health
 
 # Configure logging
 logging.basicConfig(
@@ -133,44 +136,13 @@ def serve_index(request: Request):
     return templates.TemplateResponse("index.html", {"request": request})
 
 
-@app.get("/health")
-def health_check():
-    """Enhanced health check with comprehensive cache status"""
-    try:
-        db_status = test_connection()
-        cache_stats = cache_service.get_stats()
-
-        # Determine overall status
-        if db_status and cache_stats['redis_cache']['connected']:
-            overall_status = "good"
-        elif db_status:
-            overall_status = "basic"
-        else:
-            overall_status = "unhealthy"
-
-        return {
-            "status": overall_status,
-            "database": "connected" if db_status else "disconnected",
-            "cache_system": {
-                "redis_cache": {
-                    "status": "connected" if cache_stats['redis_cache']['connected'] else "disconnected",
-                    "hit_rate": f"{cache_stats['redis_cache']['hit_rate']:.1f}%"
-                },
-                "performance_mode": "incremental_sync" if settings.ENABLE_STALE_WHILE_REVALIDATE else "standard"
-            },
-            "performance_targets": {
-                "redis_fallback_target": "<10ms",
-                "db_fallback_target": "<100ms",
-                "browser_caching": "disabled"
-            },
-            "background_tasks": {
-                "active_refreshes": cache_stats['background']['active_refresh_tasks'],
-                "total_refreshes": cache_stats['background']['total_refreshes_triggered'],
-                "errors": cache_stats['background']['errors']
-            }
-        }
-    except Exception as e:
-        return {"status": "unhealthy", "error": str(e)}
+@app.get("/health/detailed")
+async def detailed_health():
+    return {
+        "redis": await check_redis_health(),
+        "db": check_db_health(),
+        "opensearch": await check_opensearch_health()
+    }
 
 
 @app.get("/config")

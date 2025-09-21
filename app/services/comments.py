@@ -60,7 +60,7 @@ class CommentService:
             db.commit()
 
             # Increment like count in Redis
-            await cache_service._redis_client.incr(f"comment:{comment_id}:comment_like_count")
+            await cache_service.increment_comment_likes(str(comment_id))
         except Exception as e:
             db.rollback()
             logger.error(f"Error liking comment: {e}", exc_info=True)

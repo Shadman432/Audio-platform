@@ -16,7 +16,7 @@ class RatingService:
     
     @staticmethod
     def get_rating(db: Session, rating_id: uuid.UUID) -> Optional[Rating]:
-        return db.query(Rating).filter(Rating.id == rating_id).first()
+        return db.query(Rating).filter(Rating.rating_id == rating_id).first()
     
     @staticmethod
     def get_ratings(db: Session, skip: int = 0, limit: int = 100) -> List[Rating]:
@@ -44,7 +44,7 @@ class RatingService:
     
     @staticmethod
     def update_rating(db: Session, rating_id: uuid.UUID, rating_data: dict) -> Optional[Rating]:
-        rating = db.query(Rating).filter(Rating.id == rating_id).first()
+        rating = db.query(Rating).filter(Rating.rating_id == rating_id).first()
         if rating:
             for key, value in rating_data.items():
                 setattr(rating, key, value)
@@ -54,7 +54,7 @@ class RatingService:
     
     @staticmethod
     def delete_rating(db: Session, rating_id: uuid.UUID) -> bool:
-        rating = db.query(Rating).filter(Rating.id == rating_id).first()
+        rating = db.query(Rating).filter(Rating.rating_id == rating_id).first()
         if rating:
             db.delete(rating)
             db.commit()

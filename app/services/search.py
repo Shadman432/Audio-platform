@@ -277,7 +277,7 @@ class SearchService:
             "genre": story.genre,
             "subgenre": story.subgenre,
             "rating": story.rating,
-            "avg_rating": story.avg_rating,
+            "avg_rating": float(story.avg_rating) if story.avg_rating is not None else None,
             "author_json": story.author_json,
             "thumbnail_square": story.thumbnail_square,
             "thumbnail_rect": story.thumbnail_rect,
@@ -303,7 +303,7 @@ class SearchService:
             "genre": episode_genre,
             "subgenre": episode.subgenre,
             "rating": episode_rating,
-            "avg_rating": episode.avg_rating,
+            "avg_rating": float(episode.avg_rating) if episode.avg_rating is not None else None,
             "author_json": episode_author_json,
             "release_date": episode.release_date.isoformat() if episode.release_date else None,
             "created_at": episode.created_at.isoformat() if episode.created_at else None,
@@ -380,7 +380,7 @@ class SearchService:
     @classmethod
     async def _fetch_all_stories_from_db_and_cache(cls, db: Session) -> Dict[str, Any]:
         """Fetch all stories from database, update Redis, and return serialized data."""
-        stories = StoryService.get_all_stories(db)
+        stories = await StoryService.get_all_stories(db)
         serialized_stories = [cls._story_to_document(s) for s in stories]
         # Store in Redis
         await cache_service.set(settings.stories_cache_key, {"python": serialized_stories, "json": json.dumps(serialized_stories, default=str)})
@@ -389,7 +389,7 @@ class SearchService:
     @classmethod
     async def _fetch_all_episodes_from_db_and_cache(cls, db: Session) -> Dict[str, Any]:
         """Fetch all episodes from database, update Redis, and return serialized data."""
-        episodes = EpisodeService.get_all_episodes(db)
+        episodes = await EpisodeService.get_all_episodes(db)
         serialized_episodes = [cls._episode_to_document(e) for e in episodes]
         # Store in Redis
         await cache_service.set(settings.episodes_cache_key, {"python": serialized_episodes, "json": json.dumps(serialized_episodes, default=str)})
@@ -781,7 +781,8 @@ class SearchService:
 
             # 5. Store in Redis Cache
             # Assuming settings.search_cache_ttl_seconds is defined for cache expiration
-            await cache_service.set(cache_key, json.dumps(final_results), ex=settings.search_cache_ttl)
+            json_results = await asyncio.to_thread(json.dumps, final_results)
+            await cache_service.set(cache_key, json_results, ttl=settings.search_cache_ttl)
             logger.info(f"Stored search results in cache for query: '{query}'")
 
             return final_results

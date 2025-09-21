@@ -68,30 +68,43 @@ class MultiTierCacheService:
         self._hot_keys[key] = refresh_function
 
     async def _init_redis(self):
-        """Initialize Redis connection with error handling"""
+        """Initialize Redis connection with error handling and retries"""
         if not settings.USE_REDIS:
             logger.info("Redis disabled in configuration")
             return
 
-        try:
-            self._redis_client = redis.from_url(
-                settings.REDIS_URL,
-                socket_timeout=settings.REDIS_CONNECTION_TIMEOUT,
-                socket_connect_timeout=settings.REDIS_CONNECTION_TIMEOUT,
-                retry_on_timeout=True,
-                health_check_interval=30,
-                decode_responses=False,
-            )
+        max_retries = 3
+        retry_delay = 2
 
-            # Test connection
-            await self._redis_client.ping()
-            logger.info(f"✅ Redis connected: {settings.REDIS_URL}")
+        for attempt in range(max_retries):
+            try:
+                self._redis_client = redis.from_url(
+                    settings.REDIS_URL,
+                    socket_timeout=10,
+                    socket_connect_timeout=10,
+                    retry_on_timeout=True,
+                    health_check_interval=30,
+                    decode_responses=False,
+                    max_connections=20,
+                )
 
-        except Exception as e:
-            logger.error(f"❌ Redis connection failed: {e}")
-            self._redis_client = None
-            if settings.CACHE_DEBUG_MODE:
-                raise
+                # Test connection with timeout
+                await asyncio.wait_for(self._redis_client.ping(), timeout=5.0)
+                logger.info(f"✅ Redis connected: {settings.REDIS_URL}")
+                return
+
+            except asyncio.TimeoutError:
+                logger.warning(f"Redis connection timeout on attempt {attempt + 1}/{max_retries}")
+            except Exception as e:
+                logger.error(f"Redis connection failed on attempt {attempt + 1}/{max_retries}: {e}")
+            
+            if attempt < max_retries - 1:
+                logger.info(f"Retrying Redis connection in {retry_delay} seconds...")
+                await asyncio.sleep(retry_delay)
+                retry_delay *= 2
+
+        logger.error("❌ Redis connection failed after all retries - running in degraded mode")
+        self._redis_client = None
 
     async def warm_up(self):
         """Warm up the cache by pre-loading essential data."""
@@ -239,7 +252,7 @@ class MultiTierCacheService:
         async def fetch_paginated():
             from .stories import StoryService
             with SessionLocal() as db:
-                stories = StoryService.get_stories(db, skip, limit)
+                stories = await StoryService.get_stories_paginated(db, skip, limit)
                 return [story_to_dict(s) for s in stories]
         
         return await self.get(cache_key, fetch_paginated)
@@ -251,7 +264,7 @@ class MultiTierCacheService:
         async def fetch_paginated():
             from .episodes import EpisodeService
             with SessionLocal() as db:
-                episodes = EpisodeService.get_episodes(db, skip, limit)
+                episodes = await EpisodeService.get_episodes(db, skip, limit)
                 return [episode_to_dict(e) for e in episodes]
         
         return await self.get(cache_key, fetch_paginated)
@@ -311,22 +324,34 @@ class MultiTierCacheService:
         """Batch multiple counter increments in a single pipeline"""
         if not self._redis_client or not counter_updates:
             return
-            
-        pipe = self._redis_client.pipeline()
-        for key, increment in counter_updates.items():
-            pipe.incrby(key, increment)
-        await pipe.execute()
+        try:
+            pipe = self._redis_client.pipeline()
+            for key, increment in counter_updates.items():
+                pipe.incrby(key, increment)
+            await pipe.execute()
+        except RedisError as e:
+            logger.error(f"Batch increment failed: {e}")
 
     async def increment_counter(self, key: str):
-        if self._redis_client:
+        if not self._redis_client:
+            logger.warning(f"Redis not available, skipping counter increment for {key}")
+            return
+        try:
             await self._redis_client.incr(key)
+        except Exception as e:
+            logger.error(f"Redis increment failed for key {key}: {e}")
 
     async def decrement_counter(self, key: str):
-        if self._redis_client:
+        if not self._redis_client:
+            logger.warning(f"Redis not available, skipping counter decrement for {key}")
+            return
+        try:
             # Ensure counter doesn't go below zero
             current_value = await self._redis_client.get(key)
             if current_value and int(current_value) > 0:
                 await self._redis_client.decr(key)
+        except Exception as e:
+            logger.error(f"Redis decrement failed for key {key}: {e}")
 
     async def increment_story_likes(self, story_id: str):
         await self.increment_counter(f"story:{story_id}:likes_count")
@@ -414,42 +439,56 @@ cache_service = MultiTierCacheService()
 
 
 
-def refresh_stories_cache():
+async def refresh_stories_cache():
     from .stories import StoryService # Local import
     with SessionLocal() as db:
-        stories = StoryService.get_all_stories(db)
-        return [story_to_dict(s) for s in stories]
+        stories = await StoryService.get_all_stories(db)
+        python_data = stories
+        json_data = json.dumps(python_data, default=str)
+        return {"python": python_data, "json": json_data}
 
-def refresh_episodes_cache():
+async def refresh_episodes_cache():
     from .episodes import EpisodeService # Local import
     with SessionLocal() as db:
-        episodes = EpisodeService.get_all_episodes(db)
-        return [episode_to_dict(e) for e in episodes]
+        episodes = await EpisodeService.get_all_episodes(db)
+        python_data = episodes
+        json_data = json.dumps(python_data, default=str)
+        return {"python": python_data, "json": json_data}
 
-def refresh_story_authors_cache():
+async def refresh_story_authors_cache():
     with SessionLocal() as db:
         authors = db.query(StoriesAuthors).all()
-        return [stories_authors_to_dict(a) for a in authors]
+        python_data = [stories_authors_to_dict(a) for a in authors]
+        json_data = json.dumps(python_data, default=str)
+        return {"python": python_data, "json": json_data}
 
-def refresh_episode_authors_cache():
+async def refresh_episode_authors_cache():
     with SessionLocal() as db:
         authors = db.query(EpisodeAuthors).all()
-        return [episode_authors_to_dict(a) for a in authors]
+        python_data = [episode_authors_to_dict(a) for a in authors]
+        json_data = json.dumps(python_data, default=str)
+        return {"python": python_data, "json": json_data}
 
-def refresh_home_categories_cache():
+async def refresh_home_categories_cache():
     from .home_content import HomeContentService # Local import
     with SessionLocal() as db:
-        categories = HomeContentService.get_all_home_content_no_pagination(db)
-        return [home_content_to_dict(c) for c in categories]
+        categories = await HomeContentService.get_all_home_content_no_pagination(db)
+        python_data = categories
+        json_data = json.dumps(python_data, default=str)
+        return {"python": python_data, "json": json_data}
 
-def refresh_home_series_cache():
+async def refresh_home_series_cache():
     from .home_content_series import HomeContentSeriesService # Local import
     with SessionLocal() as db:
-        series = HomeContentSeriesService.get_all_content_series(db)
-        return [home_content_series_to_dict(s) for s in series]
+        series = await HomeContentSeriesService.get_all_content_series(db)
+        python_data = series
+        json_data = json.dumps(python_data, default=str)
+        return {"python": python_data, "json": json_data}
 
-def refresh_home_slideshow_cache():
+async def refresh_home_slideshow_cache():
     from .home_slideshow import HomeSlideshowService # Local import
     with SessionLocal() as db:
-        slideshows = HomeSlideshowService.get_active_slideshows(db)
-        return [home_slideshow_to_dict(s) for s in slideshows]
+        slideshows = await asyncio.to_thread(HomeSlideshowService.get_active_slideshows, db)
+        python_data = slideshows
+        json_data = json.dumps(python_data, default=str)
+        return {"python": python_data, "json": json_data}

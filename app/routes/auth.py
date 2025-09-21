@@ -39,7 +39,7 @@ async def create_token_for_user(
     """
     try:
         # Verify user exists in the database
-        user = db.query(User).filter(User.id == request.user_id).first()
+        user = db.query(User).filter(User.user_id == request.user_id).first()
         if not user:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
@@ -70,7 +70,7 @@ async def get_current_user_info(
 ):
     """Get current authenticated user information"""
     try:
-        user = db.query(User).filter(User.id == current_user["id"]).first()
+        user = db.query(User).filter(User.user_id == current_user["id"]).first()
         if not user:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
@@ -78,7 +78,7 @@ async def get_current_user_info(
             )
 
         return UserResponse(
-            id=str(user.id),
+            id=str(user.user_id),
             email=user.email,
             full_name=user.full_name,
             created_at=str(user.created_at)

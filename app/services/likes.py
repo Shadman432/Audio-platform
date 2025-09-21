@@ -16,7 +16,7 @@ class LikeService:
     
     @staticmethod
     def get_like(db: Session, like_id: uuid.UUID) -> Optional[Like]:
-        return db.query(Like).filter(Like.id == like_id).first()
+        return db.query(Like).filter(Like.like_id == like_id).first()
     
     @staticmethod
     def get_likes(db: Session, skip: int = 0, limit: int = 100) -> List[Like]:

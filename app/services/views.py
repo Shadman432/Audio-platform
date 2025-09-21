@@ -15,7 +15,7 @@ class ViewService:
     
     @staticmethod
     def get_view(db: Session, view_id: uuid.UUID) -> Optional[View]:
-        return db.query(View).filter(View.id == view_id).first()
+        return db.query(View).filter(View.view_id == view_id).first()
     
     @staticmethod
     def get_views(db: Session, skip: int = 0, limit: int = 100) -> List[View]:
@@ -35,7 +35,7 @@ class ViewService:
     
     @staticmethod
     def delete_view(db: Session, view_id: uuid.UUID) -> bool:
-        view = db.query(View).filter(View.id == view_id).first()
+        view = db.query(View).filter(View.view_id == view_id).first()
         if view:
             db.delete(view)
             db.commit()

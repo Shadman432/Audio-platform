@@ -16,7 +16,7 @@ class ShareService:
     
     @staticmethod
     def get_share(db: Session, share_id: uuid.UUID) -> Optional[Share]:
-        return db.query(Share).filter(Share.id == share_id).first()
+        return db.query(Share).filter(Share.share_id == share_id).first()
     
     @staticmethod
     def get_shares(db: Session, skip: int = 0, limit: int = 100) -> List[Share]:
@@ -44,7 +44,7 @@ class ShareService:
     
     @staticmethod
     def delete_share(db: Session, share_id: uuid.UUID) -> bool:
-        share = db.query(Share).filter(Share.id == share_id).first()
+        share = db.query(Share).filter(Share.share_id == share_id).first()
         if share:
             db.delete(share)
             db.commit()

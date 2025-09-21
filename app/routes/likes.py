@@ -59,11 +59,9 @@ async def toggle_like_story(
     
     # Update Redis counter immediately
     if response["liked"]:
-        await cache_service._redis_client.incr(f"story:{story_id}:likes_count")
+        await cache_service.increment_story_likes(str(story_id))
     else:
-        current = await cache_service._redis_client.get(f"story:{story_id}:likes_count")
-        if current and int(current) > 0:
-            await cache_service._redis_client.decr(f"story:{story_id}:likes_count")
+        await cache_service.decrement_story_likes(str(story_id))
     
     return response
 
@@ -78,11 +76,9 @@ async def toggle_like_episode(
     
     # Update Redis counter immediately
     if response["liked"]:
-        await cache_service._redis_client.incr(f"episode:{episode_id}:likes_count")
+        await cache_service.increment_episode_likes(str(episode_id))
     else:
-        current = await cache_service._redis_client.get(f"episode:{episode_id}:likes_count")
-        if current and int(current) > 0:
-            await cache_service._redis_client.decr(f"episode:{episode_id}:likes_count")
+        await cache_service.decrement_episode_likes(str(episode_id))
     
     return response
 

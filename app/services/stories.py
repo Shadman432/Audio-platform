@@ -6,31 +6,7 @@ from ..models.stories import Story
 import uuid
 import json
 from ..services.cache_service import cache_service
-
-def serialize_story(story: Story) -> Dict[str, Any]:
-    """Converts a Story SQLAlchemy object to a dictionary for caching."""
-    return {
-        "story_id": str(story.story_id),
-        "title": story.title,
-        "meta_title": story.meta_title,
-        "thumbnail_square": story.thumbnail_square,
-        "thumbnail_rect": story.thumbnail_rect,
-        "thumbnail_responsive": story.thumbnail_responsive,
-        "description": story.description,
-        "meta_description": story.meta_description,
-        "genre": story.genre,
-        "subgenre": story.subgenre,
-        "rating": story.rating,
-        "avg_rating": float(story.avg_rating) if story.avg_rating is not None else None,
-        "avg_rating_count": story.avg_rating_count,
-        "likes_count": story.likes_count,
-        "comments_count": story.comments_count,
-        "shares_count": story.shares_count,
-        "views_count": story.views_count,
-        "author_json": story.author_json,
-        "created_at": story.created_at.isoformat() if story.created_at else None,
-        "updated_at": story.updated_at.isoformat() if story.updated_at else None,
-    }
+from ..services.serializers import story_to_dict as serialize_story
 
 
 

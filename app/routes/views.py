@@ -22,7 +22,7 @@ class ViewCreate(ViewBase):
     pass
 
 class ViewResponse(ViewBase):
-    id: uuid.UUID
+    view_id: uuid.UUID
     created_at: datetime
 
     class Config:
@@ -40,9 +40,9 @@ async def create_view(view: ViewCreate, db: Session = Depends(get_db)):
     created_view = ViewService.create_view(db, view.model_dump())
 
     if view.story_id:
-        await cache_service._redis_client.incr(f"story:{view.story_id}:views_count")
+        await cache_service.increment_story_views(str(view.story_id))
     elif view.episode_id:
-        await cache_service._redis_client.incr(f"episode:{view.episode_id}:views_count")
+        await cache_service.increment_episode_views(str(view.episode_id))
 
     return created_view
 

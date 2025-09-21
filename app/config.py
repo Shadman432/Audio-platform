@@ -74,7 +74,7 @@ class Settings(BaseSettings):
     # =============================
     # OpenSearch Configuration
     # =============================
-    opensearch_url: str = Field(default="https://localhost:9200", description="OpenSearch URL")
+    opensearch_url: str = Field(default="https://opensearch:9200", description="OpenSearch URL")
     opensearch_username: str = Field(default="admin", description="OpenSearch username")
     opensearch_password: str = Field(default="admin", description="OpenSearch password")
     opensearch_stories_index: str = Field(default="stories", description="OpenSearch index for stories")

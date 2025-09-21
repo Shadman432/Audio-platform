@@ -21,7 +21,7 @@ class ShareCreate(ShareBase):
     pass
 
 class ShareResponse(ShareBase):
-    id: uuid.UUID
+    share_id: uuid.UUID
     user_id: uuid.UUID
     created_at: datetime
 
@@ -44,9 +44,9 @@ async def create_share(
     created_share = ShareService.create_share(db, share_data)
 
     if share.story_id:
-        await cache_service._redis_client.incr(f"story:{share.story_id}:shares_count")
+        await cache_service.increment_story_shares(str(share.story_id))
     elif share.episode_id:
-        await cache_service._redis_client.incr(f"episode:{share.episode_id}:shares_count")
+        await cache_service.increment_episode_shares(str(share.episode_id))
 
     return created_share
 

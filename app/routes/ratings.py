@@ -26,7 +26,7 @@ class RatingUpdate(BaseModel):
     rating_value: int = Field(..., ge=1, le=5)
 
 class RatingResponse(RatingBase):
-    id: uuid.UUID
+    rating_id: uuid.UUID
     user_id: uuid.UUID
     created_at: datetime
 

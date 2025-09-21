@@ -36,10 +36,10 @@ else:
     engine = create_engine(
         db_url,
         echo=False,
-        pool_size=20,        # Increase from default 5
-        max_overflow=30,     # Increase from default 10
+        pool_size=20,
+        max_overflow=30,
         pool_pre_ping=True,
-        pool_recycle=300,
+        pool_recycle=3600,
         connect_args={
             'sslmode': 'require',
             # Add the path to your server's CA certificate here
