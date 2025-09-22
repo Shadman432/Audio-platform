@@ -92,7 +92,7 @@ async def get_episodes(skip: int = 0, limit: int = 100, db: Session = Depends(ge
         return {"python": python_data, "json": json_data}
 
     # The cache key should reflect the pagination parameters
-    cache_key = f"{settings.episodes_cache_key_prefix}:skip={skip}&limit={limit}"
+    cache_key = f"{settings.episode_cache_key_prefix}:skip={skip}&limit={limit}"
     cached_data = await cache_service.get(cache_key, db_fallback=db_fallback)
     
     if not cached_data:

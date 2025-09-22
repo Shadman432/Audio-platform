@@ -41,7 +41,7 @@ else:
         pool_pre_ping=True,
         pool_recycle=3600,
         connect_args={
-            'sslmode': 'require',
+            'sslmode': 'prefer',
             # Add the path to your server's CA certificate here
             # 'sslrootcert': '/path/to/server-ca.pem',
             'connect_timeout': 10
