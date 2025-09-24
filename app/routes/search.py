@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Query
 from typing import List, Dict, Any
-from ..services.search import SearchService
+from ..services.opensearch_service import opensearch_service
 
 router = APIRouter()
 
@@ -22,5 +22,5 @@ async def unified_search_api(
     - **Caching**: Frequent queries are cached for sub-millisecond response times.
     - **Ranking**: Results are ranked by relevance, with stories prioritized over episodes.
     """
-    results = await SearchService.unified_search(query, skip, limit)
+    results = await opensearch_service.search_unified(query.strip(), skip, limit)
     return results

@@ -7,7 +7,7 @@ import os
 # Add the app directory to Python path
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from app.services.search import OpenSearchDataService
+from app.services.opensearch_service import OpenSearchService as OpenSearchDataService
 from app.database import SessionLocal
 from app.models.stories import Story
 from app.models.episodes import Episode
@@ -61,7 +61,7 @@ async def setup_opensearch():
     
     # Step 6: Test search
     print("6. Testing search functionality...")
-    results = await OpenSearchDataService.search_with_redis_counters("story", limit=3)
+    results = await OpenSearchDataService.search_unified("story", limit=3)
     print(f"   Search test returned {len(results)} results")
     
     if results:
@@ -86,7 +86,7 @@ async def test_specific_search():
     
     for query in test_queries:
         print(f"\nSearching for: '{query}'")
-        results = await OpenSearchDataService.search_with_redis_counters(query, limit=3)
+        results = await OpenSearchDataService.search_unified(query, limit=3)
         
         if results:
             print(f"Found {len(results)} results:")

@@ -54,9 +54,16 @@ async def lifespan(app: FastAPI):
     else:
         logger.error("Database connection failed")
         
+
     # Initialize OpenSearch
     await SearchService.create_indexes_if_not_exist()
     logger.info("OpenSearch indexes verified")
+
+    # ADD THIS BLOCK:
+    # Index existing data to OpenSearch
+    from .services.opensearch_service import opensearch_service
+    await opensearch_service.setup_complete_opensearch()
+    logger.info("OpenSearch data indexed successfully")
     
     # Start cache service
     await cache_service.startup()

@@ -683,7 +683,7 @@ async def refresh_stories_cache():
         from .stories import StoryService
         with SessionLocal() as db:
             stories = await StoryService.get_all_stories(db)
-            python_data = stories
+            python_data = [story_to_dict(s) for s in stories]
             json_data = json.dumps(python_data, default=str)
             return {"python": python_data, "json": json_data}
     except Exception as e:
@@ -697,7 +697,7 @@ async def refresh_episodes_cache():
         from .episodes import EpisodeService
         with SessionLocal() as db:
             episodes = await EpisodeService.get_all_episodes(db)
-            python_data = episodes
+            python_data = [episode_to_dict(e) for e in episodes]
             json_data = json.dumps(python_data, default=str)
             return {"python": python_data, "json": json_data}
     except Exception as e:
@@ -737,7 +737,7 @@ async def refresh_home_categories_cache():
         from .home_content import HomeContentService
         with SessionLocal() as db:
             categories = await HomeContentService.get_all_home_content_no_pagination(db)
-            python_data = categories
+            python_data = [home_content_to_dict(c) for c in categories]
             json_data = json.dumps(python_data, default=str)
             return {"python": python_data, "json": json_data}
     except Exception as e:
@@ -751,7 +751,7 @@ async def refresh_home_series_cache():
         from .home_content_series import HomeContentSeriesService
         with SessionLocal() as db:
             series = await HomeContentSeriesService.get_all_content_series(db)
-            python_data = series
+            python_data = [home_content_series_to_dict(s) for s in series]
             json_data = json.dumps(python_data, default=str)
             return {"python": python_data, "json": json_data}
     except Exception as e:
@@ -765,7 +765,7 @@ async def refresh_home_slideshow_cache():
         from .home_slideshow import HomeSlideshowService
         with SessionLocal() as db:
             slideshows = await asyncio.to_thread(HomeSlideshowService.get_active_slideshows, db)
-            python_data = slideshows
+            python_data = [home_slideshow_to_dict(s) for s in slideshows]
             json_data = json.dumps(python_data, default=str)
             return {"python": python_data, "json": json_data}
     except Exception as e:

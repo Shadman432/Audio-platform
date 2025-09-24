@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Text, DateTime, ForeignKey, Interval, Numeric, Integer
+from sqlalchemy import Column, Text, DateTime, ForeignKey, Interval, Numeric, Integer, CheckConstraint
 from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.sql import func
 from sqlalchemy.orm import relationship
@@ -16,6 +16,9 @@ else:
 
 class Episode(Base):
     __tablename__ = "episodes"
+    __table_args__ = (
+        CheckConstraint('avg_rating >= 0 AND avg_rating <= 5', name='episodes_avg_rating_check'),
+    )
 
     episode_id = Column(UUIDType, primary_key=True, default=uuid.uuid4)
     story_id = Column(UUIDType, ForeignKey("stories.story_id", ondelete="CASCADE"), nullable=False)
@@ -27,7 +30,7 @@ class Episode(Base):
     thumbnail_responsive = Column(Text)
     description = Column(Text)
     meta_description = Column(Text)
-    hls_url = Column(Text, nullable=False)
+    hls_url = Column(Text)
     duration = Column(Interval)
     release_date = Column(DateTime(timezone=True))
     genre = Column(Text)

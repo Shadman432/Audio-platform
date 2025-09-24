@@ -25,12 +25,11 @@ class EpisodeBase(BaseModel):
     thumbnail_responsive: Optional[str] = None
     description: Optional[str] = None
     meta_description: Optional[str] = None
-    hls_url: str
     duration: Optional[timedelta] = None
     release_date: Optional[datetime] = None
 
 class EpisodeCreate(EpisodeBase):
-    pass
+    hls_url: Optional[str] = None
 
 class EpisodeUpdate(BaseModel):
     story_id: Optional[uuid.UUID] = None
@@ -47,6 +46,16 @@ class EpisodeUpdate(BaseModel):
 
 class EpisodeResponse(EpisodeBase):
     episode_id: uuid.UUID
+    hls_url: Optional[str] = None
+    genre: Optional[str] = None
+    subgenre: Optional[str] = None
+    rating: Optional[str] = None
+    avg_rating: Optional[float] = None
+    author_json: Optional[List[dict]] = None
+    likes_count: int = 0
+    comments_count: int = 0
+    views_count: int = 0
+    shares_count: int = 0
     created_at: datetime
     updated_at: datetime
 
@@ -72,10 +81,8 @@ async def get_all_episodes_explicit(db: Session = Depends(get_db)):
     Consider using the paginated endpoint (GET /episodes) for smaller responses.
     """
     async def db_fallback():
-        episodes = EpisodeService.get_all_episodes(db)
-        python_data = [episode_to_dict(e) for e in episodes]
-        json_data = json.dumps(python_data, default=str)
-        return {"python": python_data, "json": json_data}
+        episodes = await EpisodeService.get_all_episodes(db)
+        return {"python": episodes, "json": json.dumps(episodes, default=str)}
 
     cached_data = await cache_service.get(settings.episodes_cache_key, db_fallback=db_fallback) # Changed
     if not cached_data:
@@ -86,10 +93,8 @@ async def get_all_episodes_explicit(db: Session = Depends(get_db)):
 @router.get("/", response_model=List[EpisodeResponse])
 async def get_episodes(skip: int = 0, limit: int = 100, db: Session = Depends(get_db)):
     async def db_fallback():
-        episodes = EpisodeService.get_episodes(db, skip, limit)
-        python_data = [episode_to_dict(e) for e in episodes]
-        json_data = json.dumps(python_data, default=str)
-        return {"python": python_data, "json": json_data}
+        episodes = await EpisodeService.get_episodes(db, skip, limit)
+        return {"python": episodes, "json": json.dumps(episodes, default=str)}
 
     # The cache key should reflect the pagination parameters
     cache_key = f"{settings.episode_cache_key_prefix}:skip={skip}&limit={limit}"
@@ -108,10 +113,10 @@ async def get_episodes_by_story(story_id: uuid.UUID, db: Session = Depends(get_d
 @router.get("/{episode_id}", response_model=EpisodeResponse)
 async def get_episode(episode_id: uuid.UUID, db: Session = Depends(get_db)):
     async def db_fallback():
-        episode = EpisodeService.get_episode(db, episode_id)
+        episode = await EpisodeService.get_episode(db, episode_id)
         if not episode:
             return None # Indicate not found
-        return episode_to_dict(episode)
+        return episode
 
     cached_episode = await cache_service.get(f"{settings.episode_cache_key_prefix}:{episode_id}", db_fallback=db_fallback)
 
