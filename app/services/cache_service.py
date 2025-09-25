@@ -84,8 +84,8 @@ class MultiTierCacheService:
             try:
                 self._redis_client = redis.from_url(
                     settings.REDIS_URL,
-                    socket_timeout=5,
-                    socket_connect_timeout=5,
+                    socket_timeout=20,
+                    socket_connect_timeout=20,
                     socket_keepalive=True,
                     socket_keepalive_options={},
                     retry_on_timeout=True,
@@ -559,6 +559,34 @@ class MultiTierCacheService:
             }
         }
 
+    async def get_paginated_stories(self, skip: int, limit: int) -> list:
+        """Get paginated stories from cache."""
+        try:
+            cached_data = await self.get(f"{settings.stories_cache_key}:all")
+            if cached_data and "python" in cached_data:
+                stories = cached_data["python"]
+                return stories[skip : skip + limit]
+            else:
+                logger.warning("Paginated stories not found in cache. Returning empty list.")
+                return []
+        except Exception as e:
+            logger.error(f"Error getting paginated stories from cache: {e}")
+            return []
+
+    async def get_paginated_episodes(self, skip: int, limit: int) -> list:
+        """Get paginated episodes from cache."""
+        try:
+            cached_data = await self.get(f"{settings.episodes_cache_key}:all")
+            if cached_data and "python" in cached_data:
+                episodes = cached_data["python"]
+                return episodes[skip : skip + limit]
+            else:
+                logger.warning("Paginated episodes not found in cache. Returning empty list.")
+                return []
+        except Exception as e:
+            logger.error(f"Error getting paginated episodes from cache: {e}")
+            return []
+
     # Counter methods with error handling
     async def increment_counter(self, key: str):
         """Increment counter with error handling"""
@@ -683,7 +711,7 @@ async def refresh_stories_cache():
         from .stories import StoryService
         with SessionLocal() as db:
             stories = await StoryService.get_all_stories(db)
-            python_data = [story_to_dict(s) for s in stories]
+            python_data = [story_to_dict(s) if hasattr(s, 'story_id') else s for s in stories]
             json_data = json.dumps(python_data, default=str)
             return {"python": python_data, "json": json_data}
     except Exception as e:
@@ -697,7 +725,7 @@ async def refresh_episodes_cache():
         from .episodes import EpisodeService
         with SessionLocal() as db:
             episodes = await EpisodeService.get_all_episodes(db)
-            python_data = [episode_to_dict(e) for e in episodes]
+            python_data = [episode_to_dict(e) if hasattr(e, 'episode_id') else e for e in episodes]
             json_data = json.dumps(python_data, default=str)
             return {"python": python_data, "json": json_data}
     except Exception as e:

@@ -25,7 +25,7 @@ class EpisodeBase(BaseModel):
     thumbnail_responsive: Optional[str] = None
     description: Optional[str] = None
     meta_description: Optional[str] = None
-    duration: Optional[timedelta] = None
+    duration: Optional[str] = None
     release_date: Optional[datetime] = None
 
 class EpisodeCreate(EpisodeBase):
@@ -41,7 +41,7 @@ class EpisodeUpdate(BaseModel):
     description: Optional[str] = None
     meta_description: Optional[str] = None
     hls_url: Optional[str] = None
-    duration: Optional[timedelta] = None
+    duration: Optional[str] = None
     release_date: Optional[datetime] = None
 
 class EpisodeResponse(EpisodeBase):

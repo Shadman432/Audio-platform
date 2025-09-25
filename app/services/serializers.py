@@ -58,7 +58,7 @@ def episode_to_dict(episode: Episode) -> Dict[str, Any]:
         "description": episode.description,
         "meta_description": episode.meta_description,
         "hls_url": episode.hls_url,
-        "duration": episode.duration,
+        "duration": str(episode.duration) if episode.duration else None,
         "release_date": episode.release_date.isoformat() if episode.release_date else None,
         "genre": episode.genre,
         "subgenre": episode.subgenre,
