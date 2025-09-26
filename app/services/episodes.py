@@ -2,6 +2,7 @@ from sqlalchemy.orm import Session
 from typing import List, Optional, Dict, Any
 import uuid
 import json
+from ..config import settings
 from ..models.episodes import Episode
 from ..services.cache_service import cache_service
 from ..services.serializers import episode_to_dict as serialize_episode
@@ -23,7 +24,7 @@ class EpisodeService:
     
     @staticmethod
     async def get_episode(db: Session, episode_id: uuid.UUID) -> Optional[Dict[str, Any]]:
-        cache_key = f"episodes:id:{episode_id}"
+        cache_key = f"{settings.episode_cache_key_prefix}:{episode_id}"
         
         async def db_fallback():
             episode = db.query(Episode).filter(Episode.episode_id == episode_id).first()
@@ -32,7 +33,7 @@ class EpisodeService:
                 return serialize_episode(episode)
             return None
 
-        cached_data = await cache_service.get(cache_key, db_fallback, ttl=300)
+        cached_data = await cache_service.get(cache_key, db_fallback, ttl=7200)  # 2 hours
         return cached_data
     
     @staticmethod
@@ -63,13 +64,18 @@ class EpisodeService:
     async def get_episodes_by_story(db: Session, story_id: uuid.UUID) -> List[Dict[str, Any]]:
         cache_key = f"episodes:by_story:{story_id}"
         
+        # Check if this was pre-cached during refresh
+        cached_data = await cache_service.get(cache_key)
+        if cached_data:
+            return cached_data
+        
+        # Fallback to database
         async def db_fallback():
             episodes = db.query(Episode).filter(Episode.story_id == story_id).all()
-            
             return [serialize_episode(episode) for episode in episodes]
 
-        cached_data = await cache_service.get(cache_key, db_fallback, ttl=300)
-        return cached_data
+        result = await cache_service.get(cache_key, db_fallback, ttl=3600)
+        return result if result else []
     
     @staticmethod
     async def update_episode(db: Session, episode_id: uuid.UUID, episode_data: dict) -> Optional[Episode]:

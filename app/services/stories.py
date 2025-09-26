@@ -5,6 +5,7 @@ from sqlalchemy import select
 from ..models.stories import Story
 import uuid
 import json
+from ..config import settings
 from ..services.cache_service import cache_service
 from ..services.serializers import story_to_dict as serialize_story
 
@@ -53,7 +54,7 @@ class StoryService:
 
     @staticmethod
     async def get_story_by_id(db: Session, story_id: uuid.UUID) -> Optional[Dict[str, Any]]:
-        cache_key = f"stories:id:{story_id}"
+        cache_key = f"{settings.story_cache_key_prefix}:{story_id}"
         
         async def db_fallback():
             stmt = select(Story).where(Story.story_id == story_id)
@@ -63,7 +64,7 @@ class StoryService:
                 return serialize_story(story)
             return None
 
-        cached_data = await cache_service.get(cache_key, db_fallback, ttl=300)
+        cached_data = await cache_service.get(cache_key, db_fallback, ttl=7200)  # 2 hours
         return cached_data
 
     @staticmethod
