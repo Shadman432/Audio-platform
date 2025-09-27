@@ -9,7 +9,7 @@ from redis.exceptions import RedisError, ConnectionError, TimeoutError
 
 from ..config import settings
 from ..database import SessionLocal
-
+from ..models.stories import Story
 from ..models.stories_authors import StoriesAuthors
 from ..models.episode_authors import EpisodeAuthors
 from .serializers import (
@@ -65,7 +65,8 @@ class MultiTierCacheService:
         # Memory cache layer
         self._memory_cache: Dict[str, Dict[str, Any]] = {}
         self._memory_cache_max_size = 1000
-        self._memory_ttl = 60  # 1 minute memory cache
+        self._memory_ttl = 300  # 5 minutes memory cache (since Redis is now stable)
+        self._redis_master_ttl = 43200  # 12 hours for master keys
 
     def register_hot_key(self, key: str, refresh_function: Callable[[], Coroutine[Any, Any, Any]]):
         """Register a hot key for background refresh"""
@@ -560,51 +561,76 @@ class MultiTierCacheService:
         }
 
     async def get_paginated_stories(self, skip: int, limit: int) -> list:
+        """Direct Redis read - no DB fallback"""
         try:
-            cached_data = await self.get("stories:all")
-            if cached_data and "python" in cached_data:
-                stories = cached_data["python"]
-                return stories[skip: skip + limit]
-            return []
+            # Direct Redis get without complex fallback
+            if not self._redis_client:
+                return []
+                
+            cached_data = await self._redis_client.get(settings.stories_cache_key)
+            if not cached_data:
+                return []
+            
+            data = self._decompress_data(cached_data)
+            stories = data.get("python", [])
+            return stories[skip:skip + limit]
+            
         except Exception as e:
             logger.error(f"Error in get_paginated_stories: {e}")
             return []
-
 
     async def get_paginated_episodes(self, skip: int, limit: int) -> list:
-        """Get paginated episodes from cache with smart fallback."""
+        """Direct Redis read - no DB fallback"""
         try:
-            cached_data = await self.get("episodes:all")
-            if cached_data and "python" in cached_data:
-                episodes = cached_data["python"]
-                return episodes[skip: skip + limit]
-            return []
+            if not self._redis_client:
+                return []
+                
+            cached_data = await self._redis_client.get(settings.episodes_cache_key)
+            if not cached_data:
+                return []
+            
+            data = self._decompress_data(cached_data)
+            episodes = data.get("python", [])
+            return episodes[skip:skip + limit]
+            
         except Exception as e:
-            logger.error(f"Error in get_paginated_stories: {e}")
+            logger.error(f"Error in get_paginated_episodes: {e}")
             return []
-    
+
     async def get_story_by_id(self, story_id: str) -> dict | None:
-        """Get single story by ID from Redis cache (from :all)."""
+        """Direct ID lookup from Redis"""
         try:
-            cached_data = await self.get(f"{settings.stories_cache_key}:all")
-            if cached_data and "python" in cached_data:
-                stories = cached_data["python"]
-                return next((s for s in stories if str(s.get("story_id")) == str(story_id)), None)
-            return None
+            if not self._redis_client:
+                return None
+                
+            cached_data = await self._redis_client.get(settings.stories_cache_key)
+            if not cached_data:
+                return None
+            
+            data = self._decompress_data(cached_data)
+            stories = data.get("python", [])
+            return next((s for s in stories if str(s.get("story_id")) == str(story_id)), None)
+            
         except Exception as e:
-            logger.error(f"Error getting story by id {story_id} from cache: {e}")
+            logger.error(f"Error getting story by id {story_id}: {e}")
             return None
 
     async def get_episode_by_id(self, episode_id: str) -> dict | None:
-        """Get single episode by ID from Redis cache (from :all)."""
+        """Direct ID lookup from Redis"""
         try:
-            cached_data = await self.get(f"{settings.episodes_cache_key}:all")
-            if cached_data and "python" in cached_data:
-                episodes = cached_data["python"]
-                return next((e for e in episodes if str(e.get("episode_id")) == str(episode_id)), None)
-            return None
+            if not self._redis_client:
+                return None
+                
+            cached_data = await self._redis_client.get(settings.episodes_cache_key)
+            if not cached_data:
+                return None
+            
+            data = self._decompress_data(cached_data)
+            episodes = data.get("python", [])
+            return next((e for e in episodes if str(e.get("episode_id")) == str(episode_id)), None)
+            
         except Exception as e:
-            logger.error(f"Error getting episode by id {episode_id} from cache: {e}")
+            logger.error(f"Error getting episode by id {episode_id}: {e}")
             return None
 
 
@@ -727,75 +753,56 @@ cache_service = MultiTierCacheService()
 
 # Cache refresh functions with error handling
 async def refresh_stories_cache():
-    """Refresh stories cache with pagination and individual items"""
+    """Refresh master stories key only"""
     try:
-        from .stories import StoryService
-        with SessionLocal() as db:
-            stories = await StoryService.get_all_stories(db)
-            python_data = [story_to_dict(s) if hasattr(s, 'story_id') else s for s in stories]
-            json_data = json.dumps(python_data, default=str)
-            
-            # Store main cache
-            main_cache = {"python": python_data, "json": json_data}
-            
-            # Store individual story items for fast lookup
-            for story in python_data:
-                story_id = story.get('story_id')
-                if story_id:
-                    await cache_service.set(f"{settings.story_cache_key_prefix}:{story_id}", story, ttl=7200)
-            
-            # Pre-create common pagination caches
-            await cache_service.set(f"{settings.stories_cache_key}:skip=0&limit=10", python_data[:10], ttl=3600)
-            await cache_service.set(f"{settings.stories_cache_key}:skip=0&limit=20", python_data[:20], ttl=3600)
-            await cache_service.set(f"{settings.stories_cache_key}:skip=0&limit=100", python_data[:100], ttl=3600)
-            
-            return main_cache
+        from ..database import SessionLocal
+        from ..models.stories import Story
+        
+        db = SessionLocal()
+        stories = db.query(Story).all()
+        db.close()
+        
+        python_data = [story_to_dict(s) for s in stories]
+        json_data = json.dumps(python_data, default=str)
+        
+        main_cache = {"python": python_data, "json": json_data}
+        
+        # Set with 12-hour TTL
+        await cache_service.set(settings.stories_cache_key, main_cache, ttl=43200)
+        
+        logger.info(f"✅ Refreshed stories:all with {len(python_data)} stories")
+        return main_cache
+        
     except Exception as e:
-        logger.error(f"Error refreshing stories cache: {e}")
+        logger.error(f"❌ Error refreshing stories cache: {e}")
         return {"python": [], "json": "[]"}
-
 
 async def refresh_episodes_cache():
-    """Refresh episodes cache with pagination and individual items"""
+    """Refresh master episodes key only"""
     try:
         from .episodes import EpisodeService
-        with SessionLocal() as db:
-            episodes = await EpisodeService.get_all_episodes(db)
-            python_data = [episode_to_dict(e) if hasattr(e, 'episode_id') else e for e in episodes]
-            json_data = json.dumps(python_data, default=str)
-            
-            # Store main cache
-            main_cache = {"python": python_data, "json": json_data}
-            
-            # Store individual episode items for fast lookup
-            episodes_by_story = {}
-            for episode in python_data:
-                episode_id = episode.get('episode_id')
-                story_id = episode.get('story_id')
-                
-                if episode_id:
-                    await cache_service.set(f"{settings.episode_cache_key_prefix}:{episode_id}", episode, ttl=7200)
-                
-                # Group by story for story-episode mapping
-                if story_id:
-                    if story_id not in episodes_by_story:
-                        episodes_by_story[story_id] = []
-                    episodes_by_story[story_id].append(episode)
-            
-            # Cache story-episode mappings
-            for story_id, story_episodes in episodes_by_story.items():
-                await cache_service.set(f"episodes:by_story:{story_id}", story_episodes, ttl=3600)
-            
-            # Pre-create common pagination caches
-            await cache_service.set(f"{settings.episodes_cache_key}:skip=0&limit=10", python_data[:10], ttl=3600)
-            await cache_service.set(f"{settings.episodes_cache_key}:skip=0&limit=20", python_data[:20], ttl=3600)
-            await cache_service.set(f"{settings.episodes_cache_key}:skip=0&limit=100", python_data[:100], ttl=3600)
-            
-            return main_cache
+        from ..database import SessionLocal
+        from ..models.episodes import Episode
+        
+        db = SessionLocal()
+        episodes = db.query(Episode).all()
+        db.close()
+        
+        python_data = [episode_to_dict(e) for e in episodes]
+        json_data = json.dumps(python_data, default=str)
+        
+        main_cache = {"python": python_data, "json": json_data}
+        
+        # Set with 12-hour TTL
+        await cache_service.set(settings.episodes_cache_key, main_cache, ttl=43200)
+        
+        logger.info(f"✅ Refreshed episodes:all with {len(python_data)} episodes")
+        return main_cache
+        
     except Exception as e:
-        logger.error(f"Error refreshing episodes cache: {e}")
+        logger.error(f"❌ Error refreshing episodes cache: {e}")
         return {"python": [], "json": "[]"}
-
+    
 
 async def refresh_story_authors_cache():
     """Refresh story authors cache with error handling"""

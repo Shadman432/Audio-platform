@@ -450,7 +450,7 @@ async def delete_story(story_id: uuid.UUID, db: Session = Depends(get_db)):
         # Invalidate caches asynchronously
         async def invalidate_caches():
             await cache_service.delete(settings.stories_cache_key) # Changed
-            await cache_service.delete(f"{settings.story_cache_key_prefix}:{story_id}") # Changed
+            await cache_service.delete(settings.stories_cache_key)  # Clear master key only 
             await cache_service.clear_pattern("search:*")
             await cache_service.clear_pattern("stories:*")
         

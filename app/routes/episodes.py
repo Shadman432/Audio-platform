@@ -90,39 +90,38 @@ async def get_all_episodes_explicit(db: Session = Depends(get_db)):
 
     return Response(content=cached_data['json'], media_type="application/json")
 
-@router.get("/", response_model=List[EpisodeResponse])
-async def get_episodes(skip: int = 0, limit: int = 100, db: Session = Depends(get_db)):
-    async def db_fallback():
-        episodes = await EpisodeService.get_episodes(db, skip, limit)
-        return {"python": episodes, "json": json.dumps(episodes, default=str)}
-
-    # The cache key should reflect the pagination parameters
-    cache_key = f"{settings.episode_cache_key_prefix}:skip={skip}&limit={limit}"
-    cached_data = await cache_service.get(cache_key, db_fallback=db_fallback)
+@router.get("/")
+async def get_episodes(skip: int = 0, limit: int = 100):
+    """Get episodes from Redis"""
     
-    if not cached_data:
-        raise HTTPException(status_code=503, detail="Service is warming up or data is unavailable. Please try again in a moment.")
-
-    return cached_data['python']
-
+    episodes = await cache_service.get_paginated_episodes(skip, limit)
+    
+    if not episodes:
+        raise HTTPException(status_code=503, detail="Cache not ready")
+    
+    return {
+        "success": True,
+        "episodes": episodes,
+        "count": len(episodes)
+    }
 @router.get("/story/{story_id}", response_model=List[EpisodeResponse])
 async def get_episodes_by_story(story_id: uuid.UUID, db: Session = Depends(get_db)):
     # This specific query is not cached, but could be if needed.
     return await EpisodeService.get_episodes_by_story(db, story_id)
 
-@router.get("/{episode_id}", response_model=EpisodeResponse)
-async def get_episode(episode_id: uuid.UUID, db: Session = Depends(get_db)):
-    async def db_fallback():
-        episode = await EpisodeService.get_episode(db, episode_id)
-        if not episode:
-            return None # Indicate not found
-        return episode
-
-    cached_episode = await cache_service.get(f"{settings.episode_cache_key_prefix}:{episode_id}", db_fallback=db_fallback)
-
-    if not cached_episode:
+@router.get("/{episode_id}")
+async def get_episode(episode_id: uuid.UUID):
+    """Get single episode from Redis"""
+    
+    episode = await cache_service.get_episode_by_id(str(episode_id))
+    
+    if not episode:
         raise HTTPException(status_code=404, detail="Episode not found")
-    return cached_episode
+    
+    return {
+        "success": True,
+        "episode": episode
+    }
 
 @router.patch("/{episode_id}", response_model=EpisodeResponse)
 async def update_episode(episode_id: uuid.UUID, episode: EpisodeUpdate, db: Session = Depends(get_db)):
@@ -136,7 +135,7 @@ async def update_episode(episode_id: uuid.UUID, episode: EpisodeUpdate, db: Sess
     if not updated_episode:
         raise HTTPException(status_code=404, detail="Episode not found")
     await cache_service.delete(settings.episodes_cache_key) # Changed
-    await cache_service.delete(f"{settings.episode_cache_key_prefix}:{episode_id}") # Added
+     # Added
     return updated_episode
 
 @router.delete("/{episode_id}")
