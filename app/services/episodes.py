@@ -24,29 +24,20 @@ class EpisodeService:
     
     @staticmethod
     async def get_episode(db: Session, episode_id: uuid.UUID) -> Optional[Dict[str, Any]]:
-        cache_key = f"{settings.episode_cache_key_prefix}:{episode_id}"
+        # First try to get from master :all key
+        cached_episode = await cache_service.get_episode_by_id(str(episode_id))
+        if cached_episode:
+            return cached_episode
         
-        async def db_fallback():
-            episode = db.query(Episode).filter(Episode.episode_id == episode_id).first()
-            
-            if episode:
-                return serialize_episode(episode)
-            return None
-
-        cached_data = await cache_service.get(cache_key, db_fallback, ttl=7200)  # 2 hours
-        return cached_data
-    
+        # Fallback to DB only if not found
+        episode = db.query(Episode).filter(Episode.episode_id == episode_id).first()
+        return serialize_episode(episode) if episode else None
+        
     @staticmethod
     async def get_episodes(db: Session, skip: int = 0, limit: int = 100) -> List[Dict[str, Any]]:
-        cache_key = f"episodes:paginated:{skip}:{limit}"
-        
-        async def db_fallback():
-            episodes = db.query(Episode).offset(skip).limit(limit).all()
-            
-            return [serialize_episode(episode) for episode in episodes]
+        # Get from master key via cache_service
+        return await cache_service.get_paginated_episodes(skip, limit)
 
-        cached_data = await cache_service.get(cache_key, db_fallback, ttl=300)
-        return cached_data
 
     @staticmethod
     async def get_all_episodes(db: Session) -> List[Dict[str, Any]]:
@@ -62,9 +53,14 @@ class EpisodeService:
     
     @staticmethod
     async def get_episodes_by_story(db: Session, story_id: uuid.UUID) -> List[Dict[str, Any]]:
+        # Try fast Redis hash lookup first
+        episodes_data = await cache_service.get_episodes_by_story_fast(str(story_id))
+        if episodes_data:
+            return episodes_data
+        
+        # Fallback to original method
         cache_key = f"episodes:by_story:{story_id}"
         
-        # Check if this was pre-cached during refresh
         cached_data = await cache_service.get(cache_key)
         if cached_data:
             return cached_data

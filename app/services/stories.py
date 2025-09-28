@@ -22,9 +22,8 @@ class StoryService:
         title: Optional[str] = None, 
         genre: Optional[str] = None
     ) -> List[Dict[str, Any]]:
-        cache_key = f"stories:paginated:{skip}:{limit}:{title or ''}:{genre or ''}"
-        
-        async def db_fallback():
+        # If filters are present, fallback to DB (filters are not cached)
+        if title or genre:
             stmt = select(Story)
             if title:
                 stmt = stmt.where(Story.title.ilike(f"%{title}%"))
@@ -33,12 +32,11 @@ class StoryService:
             
             stmt = stmt.order_by(Story.updated_at.desc()).offset(skip).limit(limit)
             stories = db.execute(stmt).scalars().all()
-            
             return [serialize_story(story) for story in stories]
-
-        cached_data = await cache_service.get(cache_key, db_fallback, ttl=300)
-        return cached_data
-
+        
+        # No filters: use master key pagination
+        return await cache_service.get_paginated_stories(skip, limit)
+    
     @staticmethod
     async def get_all_stories(db: Session) -> List[Dict[str, Any]]:
         cache_key = "stories:all"

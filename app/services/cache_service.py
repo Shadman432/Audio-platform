@@ -597,41 +597,53 @@ class MultiTierCacheService:
             logger.error(f"Error in get_paginated_episodes: {e}")
             return []
 
-    async def get_story_by_id(self, story_id: str) -> dict | None:
-        """Direct ID lookup from Redis"""
-        try:
-            if not self._redis_client:
-                return None
-                
-            cached_data = await self._redis_client.get(settings.stories_cache_key)
-            if not cached_data:
-                return None
-            
-            data = self._decompress_data(cached_data)
-            stories = data.get("python", [])
-            return next((s for s in stories if str(s.get("story_id")) == str(story_id)), None)
-            
-        except Exception as e:
-            logger.error(f"Error getting story by id {story_id}: {e}")
+    async def get_story_by_id_fast(self, story_id: str) -> Optional[Dict[str, Any]]:
+        """Ultra-fast story lookup using Redis hash"""
+        if not self._redis_client:
             return None
+        
+        try:
+            # Try memory cache first
+            memory_key = f"story:{story_id}"
+            memory_data = self._memory_cache_get(memory_key)
+            if memory_data:
+                return memory_data
+            
+            # Get from Redis hash
+            story_data = await self._redis_client.hget("stories:by_id", story_id)
+            if story_data:
+                data = self._decompress_data(story_data)
+                self._memory_cache_set(memory_key, data)
+                return data
+                
+        except Exception as e:
+            logger.error(f"Fast story lookup failed: {e}")
+        
+        return None
 
-    async def get_episode_by_id(self, episode_id: str) -> dict | None:
-        """Direct ID lookup from Redis"""
+    async def get_episodes_by_story_fast(self, story_id: str) -> list[Dict[str, Any]]:
+        """Ultra-fast episodes by story lookup"""
+        if not self._redis_client:
+            return []
+        
         try:
-            if not self._redis_client:
-                return None
+            # Check memory cache
+            memory_key = f"episodes:by_story:{story_id}"
+            memory_data = self._memory_cache_get(memory_key)
+            if memory_data:
+                return memory_data
+            
+            # Get from Redis hash
+            episodes_data = await self._redis_client.hget("episodes:by_story", story_id)
+            if episodes_data:
+                data = self._decompress_data(episodes_data)
+                self._memory_cache_set(memory_key, data)
+                return data
                 
-            cached_data = await self._redis_client.get(settings.episodes_cache_key)
-            if not cached_data:
-                return None
-            
-            data = self._decompress_data(cached_data)
-            episodes = data.get("python", [])
-            return next((e for e in episodes if str(e.get("episode_id")) == str(episode_id)), None)
-            
         except Exception as e:
-            logger.error(f"Error getting episode by id {episode_id}: {e}")
-            return None
+            logger.error(f"Fast episodes lookup failed: {e}")
+        
+        return []
 
 
     # Counter methods with error handling
@@ -753,7 +765,7 @@ cache_service = MultiTierCacheService()
 
 # Cache refresh functions with error handling
 async def refresh_stories_cache():
-    """Refresh master stories key only"""
+    """Refresh master stories key AND create hash index for O(1) lookups"""
     try:
         from ..database import SessionLocal
         from ..models.stories import Story
@@ -767,10 +779,20 @@ async def refresh_stories_cache():
         
         main_cache = {"python": python_data, "json": json_data}
         
-        # Set with 12-hour TTL
+        # Set main cache with 12-hour TTL
         await cache_service.set(settings.stories_cache_key, main_cache, ttl=43200)
         
-        logger.info(f"✅ Refreshed stories:all with {len(python_data)} stories")
+        # CREATE HASH INDEX FOR O(1) LOOKUPS
+        if cache_service._redis_client:
+            pipe = cache_service._redis_client.pipeline()
+            for story in python_data:
+                story_id = story.get("story_id")
+                compressed = cache_service._compress_data(story)
+                pipe.hset("stories:by_id", story_id, compressed)
+            pipe.expire("stories:by_id", 43200)  # 12 hour TTL
+            await pipe.execute()
+        
+        logger.info(f"✅ Refreshed stories with hash index for {len(python_data)} stories")
         return main_cache
         
     except Exception as e:
@@ -778,9 +800,9 @@ async def refresh_stories_cache():
         return {"python": [], "json": "[]"}
 
 async def refresh_episodes_cache():
-    """Refresh master episodes key only"""
+    """Refresh episodes with story-based hash index"""
     try:
-        from .episodes import EpisodeService
+        from ..services.episodes import EpisodeService
         from ..database import SessionLocal
         from ..models.episodes import Episode
         
@@ -793,10 +815,29 @@ async def refresh_episodes_cache():
         
         main_cache = {"python": python_data, "json": json_data}
         
-        # Set with 12-hour TTL
+        # Set main cache
         await cache_service.set(settings.episodes_cache_key, main_cache, ttl=43200)
         
-        logger.info(f"✅ Refreshed episodes:all with {len(python_data)} episodes")
+        # CREATE STORY->EPISODES HASH INDEX
+        if cache_service._redis_client:
+            # Group episodes by story_id
+            episodes_by_story = {}
+            for episode in python_data:
+                story_id = episode.get("story_id")
+                if story_id:
+                    if story_id not in episodes_by_story:
+                        episodes_by_story[story_id] = []
+                    episodes_by_story[story_id].append(episode)
+            
+            # Store in hash
+            pipe = cache_service._redis_client.pipeline()
+            for story_id, story_episodes in episodes_by_story.items():
+                compressed = cache_service._compress_data(story_episodes)
+                pipe.hset("episodes:by_story", story_id, compressed)
+            pipe.expire("episodes:by_story", 43200)  # 12 hour TTL
+            await pipe.execute()
+        
+        logger.info(f"✅ Refreshed episodes with story index")
         return main_cache
         
     except Exception as e:
