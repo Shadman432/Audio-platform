@@ -110,10 +110,9 @@ async def get_episodes_by_story(story_id: uuid.UUID, db: Session = Depends(get_d
     return await EpisodeService.get_episodes_by_story(db, story_id)
 
 @router.get("/{episode_id}")
-async def get_episode(episode_id: uuid.UUID):
-    """Get single episode from Redis"""
-    
-    episode = await cache_service.get_episode_by_id(str(episode_id))
+async def get_episode(episode_id: uuid.UUID, db: Session = Depends(get_db)):
+    """Get single episode with O(1) lookup"""
+    episode = await EpisodeService.get_episode(db, episode_id)
     
     if not episode:
         raise HTTPException(status_code=404, detail="Episode not found")

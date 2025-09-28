@@ -52,18 +52,14 @@ class StoryService:
 
     @staticmethod
     async def get_story_by_id(db: Session, story_id: uuid.UUID) -> Optional[Dict[str, Any]]:
-        cache_key = f"{settings.story_cache_key_prefix}:{story_id}"
+        # First try fast hash lookup
+        cached_story = await cache_service.get_story_by_id_fast(str(story_id))
+        if cached_story:
+            return cached_story
         
-        async def db_fallback():
-            stmt = select(Story).where(Story.story_id == story_id)
-            story = db.execute(stmt).scalar_one_or_none()
-            
-            if story:
-                return serialize_story(story)
-            return None
-
-        cached_data = await cache_service.get(cache_key, db_fallback, ttl=7200)  # 2 hours
-        return cached_data
+        # Fallback to DB only if not found
+        story = db.query(Story).filter(Story.story_id == story_id).first()
+        return serialize_story(story) if story else None
 
     @staticmethod
     async def create_story(db: Session, payload: Dict[str, Any]) -> Story:

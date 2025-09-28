@@ -621,6 +621,30 @@ class MultiTierCacheService:
         
         return None
 
+    async def get_episode_by_id(self, episode_id: str) -> Optional[Dict[str, Any]]:
+        """Ultra-fast episode lookup using Redis hash"""
+        if not self._redis_client:
+            return None
+        
+        try:
+            # Try memory cache first
+            memory_key = f"episode:{episode_id}"
+            memory_data = self._memory_cache_get(memory_key)
+            if memory_data:
+                return memory_data
+            
+            # Get from Redis hash
+            episode_data = await self._redis_client.hget("episodes:by_id", episode_id)
+            if episode_data:
+                data = self._decompress_data(episode_data)
+                self._memory_cache_set(memory_key, data)
+                return data
+                
+        except Exception as e:
+            logger.error(f"Fast episode lookup failed: {e}")
+        
+        return None
+
     async def get_episodes_by_story_fast(self, story_id: str) -> list[Dict[str, Any]]:
         """Ultra-fast episodes by story lookup"""
         if not self._redis_client:
@@ -835,6 +859,16 @@ async def refresh_episodes_cache():
                 compressed = cache_service._compress_data(story_episodes)
                 pipe.hset("episodes:by_story", story_id, compressed)
             pipe.expire("episodes:by_story", 43200)  # 12 hour TTL
+            await pipe.execute()
+
+        # CREATE EPISODE->ID HASH INDEX FOR O(1) LOOKUPS
+        if cache_service._redis_client:
+            pipe = cache_service._redis_client.pipeline()
+            for episode in python_data:
+                episode_id = episode.get("episode_id")
+                compressed = cache_service._compress_data(episode)
+                pipe.hset("episodes:by_id", episode_id, compressed)
+            pipe.expire("episodes:by_id", 43200)  # 12 hour TTL
             await pipe.execute()
         
         logger.info(f"✅ Refreshed episodes with story index")
