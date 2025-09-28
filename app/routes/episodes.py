@@ -11,7 +11,7 @@ from ..services.episodes import EpisodeService
 from ..services.serializers import episode_to_dict
 from ..services.stories import StoryService as StoriesStoryService
 from ..services.cache_service import cache_service
-from ..config import settings # Added import
+from ..config import settings
 
 router = APIRouter()
 
@@ -68,8 +68,8 @@ async def create_episode(episode: EpisodeCreate, db: Session = Depends(get_db)):
     if not story:
         raise HTTPException(status_code=400, detail=f"Story with id {episode.story_id} not found.")
     new_episode = await EpisodeService.create_episode(db, episode.model_dump())
-    await cache_service.delete(settings.episodes_cache_key) # Changed
-    await cache_service.delete(f"{settings.episode_cache_key_prefix}:{new_episode.episode_id}") # Added
+    await cache_service.delete(settings.episodes_cache_key)
+    await cache_service.delete(f"{settings.episode_cache_key_prefix}:{new_episode.episode_id}")
     return new_episode
 
 @router.get("/all")
@@ -84,7 +84,7 @@ async def get_all_episodes_explicit(db: Session = Depends(get_db)):
         episodes = await EpisodeService.get_all_episodes(db)
         return {"python": episodes, "json": json.dumps(episodes, default=str)}
 
-    cached_data = await cache_service.get(settings.episodes_cache_key, db_fallback=db_fallback) # Changed
+    cached_data = await cache_service.get(settings.episodes_cache_key, db_fallback=db_fallback)
     if not cached_data:
         raise HTTPException(status_code=503, detail="Service is warming up or data is unavailable. Please try again in a moment.")
 
@@ -104,6 +104,7 @@ async def get_episodes(skip: int = 0, limit: int = 100):
         "episodes": episodes,
         "count": len(episodes)
     }
+
 @router.get("/story/{story_id}", response_model=List[EpisodeResponse])
 async def get_episodes_by_story(story_id: uuid.UUID, db: Session = Depends(get_db)):
     # This specific query is not cached, but could be if needed.
@@ -133,8 +134,7 @@ async def update_episode(episode_id: uuid.UUID, episode: EpisodeUpdate, db: Sess
     updated_episode = await EpisodeService.update_episode(db, episode_id, update_data)
     if not updated_episode:
         raise HTTPException(status_code=404, detail="Episode not found")
-    await cache_service.delete(settings.episodes_cache_key) # Changed
-     # Added
+    await cache_service.delete(settings.episodes_cache_key)
     return updated_episode
 
 @router.delete("/{episode_id}")
@@ -142,8 +142,8 @@ async def delete_episode(episode_id: uuid.UUID, db: Session = Depends(get_db)):
     deleted = await EpisodeService.delete_episode(db, episode_id)
     if not deleted:
         raise HTTPException(status_code=404, detail="Episode not found")
-    await cache_service.delete(settings.episodes_cache_key) # Changed
-    await cache_service.delete(f"{settings.episode_cache_key_prefix}:{episode_id}") # Added
+    await cache_service.delete(settings.episodes_cache_key)
+    await cache_service.delete(f"{settings.episode_cache_key_prefix}:{episode_id}")
     return {"message": "Episode deleted successfully"}
 
 @router.get("/clearcache")
