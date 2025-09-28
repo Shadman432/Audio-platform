@@ -245,39 +245,18 @@ async def get_all_stories(
 @router.get("/{story_id}")
 async def get_story(
     story_id: uuid.UUID,
-    request: Request = None
+    db: Session = Depends(get_db)
 ):
-    """Get single story with instant caching"""
-    from ..services.cache_service import cache_service
-    start_time = time.time()
-    cache_key = f"{settings.story_cache_key_prefix}:{story_id}" # Changed
-
-    # Define fallback function
-    async def db_fallback():
-        return await _fetch_single_story_from_db(story_id)
-
-    # Get from cache service
-    story_data = await cache_service.get(cache_key, db_fallback)
-
-    if story_data is None:
+    """Get single story with O(1) lookup"""
+    story = await StoryService.get_story_by_id(db, story_id)
+    
+    if not story:
         raise HTTPException(status_code=404, detail="Story not found")
-
-    response_time_ms = (time.time() - start_time) * 1000
-    headers = _create_no_cache_headers()
-    headers["X-Response-Time"] = f"{response_time_ms:.2f}ms"
-    headers["X-Cache-Key"] = cache_key
-
-    return CustomJSONResponse(
-        content={
-            "success": True,
-            "story": story_data,
-            "meta": {
-                "response_time_ms": round(response_time_ms, 2),
-                "timestamp": datetime.utcnow().isoformat()
-            }
-        }, 
-        headers=headers
-    )
+    
+    return {
+        "success": True,
+        "story": story
+    }
 
 # =====================
 # Search Endpoints

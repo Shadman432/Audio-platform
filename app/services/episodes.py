@@ -24,7 +24,7 @@ class EpisodeService:
     
     @staticmethod
     async def get_episode(db: Session, episode_id: uuid.UUID) -> Optional[Dict[str, Any]]:
-        # First try to get from master :all key
+        # First try fast hash lookup
         cached_episode = await cache_service.get_episode_by_id(str(episode_id))
         if cached_episode:
             return cached_episode
