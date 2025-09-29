@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from typing import List, Optional
 import uuid
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from datetime import datetime
 
 from ..database import get_db
@@ -21,12 +21,13 @@ class LikeCreate(LikeBase):
     pass
 
 class LikeResponse(LikeBase):
-    id: uuid.UUID
+    id: uuid.UUID = Field(..., alias="like_id")
     user_id: uuid.UUID
     created_at: datetime
 
     class Config:
         from_attributes = True
+        populate_by_name = True
 
 class ToggleLikeResponse(BaseModel):
     liked: bool

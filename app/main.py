@@ -83,7 +83,6 @@ async def lifespan(app: FastAPI):
     
     # Start background sync services
     redis = await get_redis()
-    SyncService.start_sync_comments_job(redis)
     SyncService.start_sync_counters_job()
     
     yield

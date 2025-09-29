@@ -2,6 +2,8 @@ from sqlalchemy.orm import Session
 from typing import List, Optional
 import uuid
 from ..models.views import View
+from ..services.cache_service import cache_service
+
 
 class ViewService:
     

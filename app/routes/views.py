@@ -33,17 +33,10 @@ class ViewCountResponse(BaseModel):
 
 @router.post("/", response_model=ViewResponse)
 async def create_view(view: ViewCreate, db: Session = Depends(get_db)):
-    # Validate that either story_id or episode_id is provided, but not both
     if not ((view.story_id and not view.episode_id) or (view.episode_id and not view.story_id)):
         raise HTTPException(status_code=400, detail="Either story_id or episode_id must be provided, but not both")
     
-    created_view = ViewService.create_view(db, view.model_dump())
-
-    if view.story_id:
-        await cache_service.increment_story_views(str(view.story_id))
-    elif view.episode_id:
-        await cache_service.increment_episode_views(str(view.episode_id))
-
+    created_view = await ViewService.create_view_async(db, view.model_dump())  # Use async version
     return created_view
 
 @router.get("/{view_id}", response_model=ViewResponse)
