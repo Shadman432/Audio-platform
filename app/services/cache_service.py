@@ -20,7 +20,10 @@ from .serializers import (
     home_slideshow_to_dict,
     stories_authors_to_dict,
     episode_authors_to_dict,
+    comment_to_dict,
 )
+from ..models.comments import Comment
+from sqlalchemy.orm import joinedload
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -118,7 +121,7 @@ class MultiTierCacheService:
     async def warm_up(self):
         """Warm up the cache by pre-loading essential data"""
         logger.info("Warming up cache...")
-        
+
         if not self._hot_keys:
             logger.warning("No hot keys registered for warm-up")
             return
@@ -783,6 +786,27 @@ class MultiTierCacheService:
             raise
 
 
+    async def get_comment_stats(self, story_id: str = None, episode_id: str = None) -> Dict[str, int]:
+        """Get real-time comment statistics from Redis"""
+        parent_type = "story" if story_id else "episode"
+        parent_id = story_id if story_id else episode_id
+        
+        stats = await self._redis_client.hgetall(f"{parent_type}:{parent_id}")
+        
+        return {
+            "comments_count": int(stats.get(b"comments_count", 0)),
+            "likes_count": int(stats.get(b"likes_count", 0)),
+            "views_count": int(stats.get(b"views_count", 0)),
+            "shares_count": int(stats.get(b"shares_count", 0))
+        }
+
+    async def increment_comment_count(self, story_id: str = None, episode_id: str = None):
+        """Increment comment count"""
+        parent_type = "story" if story_id else "episode"
+        parent_id = story_id if story_id else episode_id
+        await self._redis_client.hincrby(f"{parent_type}:{parent_id}", "comments_count", 1)
+
+
 # Global cache service instance
 cache_service = MultiTierCacheService()
 
@@ -945,3 +969,71 @@ async def refresh_home_slideshow_cache():
     except Exception as e:
         logger.error(f"Error refreshing home slideshow cache: {e}")
         return {"python": [], "json": "[]"}
+
+async def refresh_all_comments_cache():
+    """Warms up all comments from the database into Redis, processing in batches."""
+    logger.info("Starting to warm up all comments into Redis...")
+    db = SessionLocal()
+    redis_client = None
+    try:
+        redis_client = redis.from_url(settings.REDIS_URL, decode_responses=True)
+        batch_size = 1000  # Process 1000 comments at a time
+        offset = 0
+        total_comments_processed = 0
+        total_stories_affected = set()
+
+        while True:
+            comments_batch = db.query(Comment).options(joinedload(Comment.user)).offset(offset).limit(batch_size).all()
+            if not comments_batch:
+                break  # No more comments to process
+
+            logger.info(f"Processing batch of {len(comments_batch)} comments...")
+            
+            comments_by_story = {}
+            for comment in comments_batch:
+                if comment.story_id:
+                    story_id = str(comment.story_id)
+                    if story_id not in comments_by_story:
+                        comments_by_story[story_id] = []
+                    comments_by_story[story_id].append(comment)
+
+            if comments_by_story:
+                pipe = redis_client.pipeline()
+                for story_id, comments in comments_by_story.items():
+                    total_stories_affected.add(story_id)
+                    parent_key = f"comments:story:{story_id}"
+                    
+                    for comment in comments:
+                        comment_id = str(comment.comment_id)
+                        score = comment.comment_like_count or 0
+                        
+                        pipe.zadd(parent_key, {comment_id: score})
+                        
+                        metadata_key = f"comment:{comment_id}"
+                        comment_dict = comment_to_dict(comment)
+                        
+                        redis_safe_data = {
+                            k: str(v) if v is not None else "" for k, v in comment_dict.items()
+                        }
+                        
+                        pipe.hset(metadata_key, mapping=redis_safe_data)
+                        pipe.expire(metadata_key, 43200)  # 12-hour TTL
+
+                    pipe.expire(parent_key, 43200)
+
+                await pipe.execute()
+
+            total_comments_processed += len(comments_batch)
+            offset += batch_size
+
+        if total_comments_processed > 0:
+            logger.info(f"Successfully warmed up {total_comments_processed} comments for {len(total_stories_affected)} stories.")
+        else:
+            logger.info("No comments found in the database to warm up.")
+
+    except Exception as e:
+        logger.error(f"Failed to warm up all comments: {e}")
+    finally:
+        db.close()
+        if redis_client:
+            await redis_client.aclose()

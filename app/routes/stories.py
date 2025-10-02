@@ -258,6 +258,18 @@ async def get_story(
         "story": story
     }
 
+@router.get("/{story_id}/stats")
+async def get_story_stats(story_id: uuid.UUID):
+    """Get real-time Redis stats for a story"""
+    from ..services.cache_service import cache_service
+    
+    stats = await cache_service.get_comment_stats(story_id=str(story_id))
+    return {
+        "story_id": story_id,
+        "stats": stats,
+        "timestamp": datetime.utcnow().isoformat()
+    }
+
 # =====================
 # Search Endpoints
 # =====================

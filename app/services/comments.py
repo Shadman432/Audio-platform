@@ -1,441 +1,276 @@
-import uuid
-from typing import List, Dict, Any, Optional
-from sqlalchemy.orm import Session
-from sqlalchemy import text, and_
-from redis.asyncio import Redis
-from ..models.comment_likes import CommentLike
-from ..models.comments import Comment
-import json
-from datetime import datetime
-import logging
+# app/services/comments.py - Refactored for Redis-first comments
 
-logger = logging.getLogger(__name__)
+import re
+from sqlalchemy.orm import Session
+from sqlalchemy import func, desc
+from typing import List, Dict, Any, Optional
+import uuid
+import random
+import json
+from datetime import datetime, timezone
+from redis.asyncio import Redis
+from sqlalchemy.exc import IntegrityError
+from fastapi import HTTPException
+
+from ..models.comments import Comment
+from ..models.comment_likes import CommentLike
+from ..models.stories import Story
+from ..models.episodes import Episode
+from ..database import SessionLocal
+from ..tasks import save_comment_to_db
 
 class CommentService:
 
     @staticmethod
-    async def add_comment(redis: Redis, comment_data: Dict[str, Any]) -> Dict[str, Any]:
-        """
-        Adds a comment to Redis and enqueues it for DB sync with improved error handling.
-        """
-        try:
-            from ..services.cache_service import cache_service
-            comment_id = uuid.uuid4()
-            comment_data['comment_id'] = str(comment_id)
-            
-            # Validate required fields
-            if not comment_data.get('comment_text', '').strip():
-                raise ValueError("Comment text is required")
-            
-            if not comment_data.get('user_id'):
-                raise ValueError("User ID is required")
-            
-            # Ensure either story_id or episode_id is present
-            if not comment_data.get('story_id') and not comment_data.get('episode_id'):
-                raise ValueError("Either story_id or episode_id is required")
-            
-            if comment_data.get('story_id') and comment_data.get('episode_id'):
-                raise ValueError("Cannot specify both story_id and episode_id")
-            
-            # Prepare data for Redis with proper type handling
-            redis_comment_data = {}
-            for key, value in comment_data.items():
-                if isinstance(value, uuid.UUID):
-                    redis_comment_data[key] = str(value)
-                elif value is not None:
-                    redis_comment_data[key] = value
-            
-            redis_comment_data['created_at'] = datetime.utcnow().isoformat()
-            redis_comment_data['updated_at'] = datetime.utcnow().isoformat()
-            redis_comment_data['comment_like_count'] = 0
-
-            # Store comment object in Redis
-            redis_key = f"comment:{comment_id}"
-            await redis.set(redis_key, json.dumps(redis_comment_data), ex=86400)  # 24 hour TTL
-
-            # Add to sync queue
-            await redis.sadd("comments:to_sync", str(comment_id))
-
-            # Increment parent entity comment count
-            if comment_data.get("story_id"):
-                await cache_service.increment_story_comments(str(comment_data['story_id']))
-                logger.info(f"Incremented comment count for story {comment_data['story_id']}")
-            elif comment_data.get("episode_id"):
-                await cache_service.increment_episode_comments(str(comment_data['episode_id']))
-                logger.info(f"Incremented comment count for episode {comment_data['episode_id']}")
-
-            # Handle replies - add to parent's replies list
-            if comment_data.get("parent_comment_id"):
-                try:
-                    parent_key = f"comment:{comment_data['parent_comment_id']}:replies"
-                    await redis.rpush(parent_key, str(comment_id))
-                    await redis.expire(parent_key, 86400)  # 24 hour TTL
-                except Exception as e:
-                    logger.warning(f"Failed to add reply to parent comment: {e}")
-
-            logger.info(f"Successfully created comment {comment_id}")
-            return redis_comment_data
-
-        except Exception as e:
-            logger.error(f"Error adding comment: {e}", exc_info=True)
-            raise
+    def _linkify_timestamps(text: str, is_story_comment: bool) -> str:
+        """Converts timestamp notations in comments to clickable HTML links."""
+        if is_story_comment:
+            # Pattern for story comments: 1(22:22), 2(33:44), etc.
+            pattern = r'(\d+)\((\d{1,2}:\d{2}(?::\d{2})?)\)'
+            def repl(match):
+                episode_num = match.group(1)
+                timestamp = match.group(2)
+                return f'<a href="/episode/{episode_num}?time={timestamp}">{match.group(0)}</a>'
+            return re.sub(pattern, repl, text)
+        else:
+            # Pattern for episode comments: 10:22, 29:09, etc.
+            pattern = r'(\d{1,2}:\d{2}(?::\d{2})?)'
+            def repl(match):
+                timestamp = match.group(1)
+                return f'<a href="?time={timestamp}">{timestamp}</a>'
+            return re.sub(pattern, repl, text)
 
     @staticmethod
-    async def like_comment(redis: Redis, db: Session, comment_id: uuid.UUID, user_id: uuid.UUID):
+    async def add_comment(db: Session, redis: Redis, comment_data: Dict[str, Any]) -> Dict[str, Any]:
         """
-        Toggle like for a comment with improved error handling and duplicate prevention.
+        Immediately writes comment to Redis for speed and queues DB write as a background task.
+        Validates existence of parent entities before creation.
         """
-        try:
-            from ..services.cache_service import cache_service
-            
-            # Check if user already liked this comment
-            existing_like = db.query(CommentLike).filter(
-                and_(CommentLike.comment_id == comment_id, CommentLike.user_id == user_id)
-            ).first()
-            
-            if existing_like:
-                # Remove like
-                db.delete(existing_like)
-                db.commit()
-                
-                # Decrement counter in Redis
-                current_count = await redis.get(f"comment:{comment_id}:comment_like_count")
-                if current_count and int(current_count) > 0:
-                    await cache_service.decrement_counter(f"comment:{comment_id}:comment_like_count")
-                
-                logger.info(f"Removed like from comment {comment_id} by user {user_id}")
-                return {"liked": False, "action": "removed"}
-            else:
-                # Add like
-                db_like = CommentLike(comment_id=comment_id, user_id=user_id)
-                db.add(db_like)
-                db.commit()
+        story_id = comment_data.get("story_id")
+        episode_id = comment_data.get("episode_id")
+        parent_comment_id = comment_data.get("parent_comment_id")
 
-                # Increment like count in Redis
-                await cache_service.increment_comment_likes(str(comment_id))
-                
-                logger.info(f"Added like to comment {comment_id} by user {user_id}")
-                return {"liked": True, "action": "added"}
-                
-        except Exception as e:
-            db.rollback()
-            logger.error(f"Error toggling comment like: {e}", exc_info=True)
-            raise
+        # --- Validation ---
+        if story_id and not db.query(Story).filter(Story.story_id == story_id).first():
+            raise HTTPException(status_code=404, detail='WRONG STORY ID OR EP ID')
+        elif episode_id and not db.query(Episode).filter(Episode.episode_id == episode_id).first():
+            raise HTTPException(status_code=404, detail='WRONG STORY ID OR EP ID')
 
-    @staticmethod
-    async def get_comment_from_redis(redis: Redis, comment_id: str) -> Optional[Dict[str, Any]]:
-        """Get a single comment from Redis"""
-        try:
-            redis_key = f"comment:{comment_id}"
-            comment_data_json = await redis.get(redis_key)
-            
-            if comment_data_json:
-                comment_data = json.loads(comment_data_json)
-                
-                # Get real-time like count from Redis
-                like_count_key = f"comment:{comment_id}:comment_like_count"
-                like_count = await redis.get(like_count_key)
-                if like_count:
-                    comment_data['comment_like_count'] = int(like_count.decode('utf-8'))
-                
-                return comment_data
-            
-            return None
-            
-        except Exception as e:
-            logger.error(f"Error getting comment {comment_id} from Redis: {e}")
-            return None
-
-    @staticmethod
-    async def get_comments_with_ranking(redis: Redis, db: Session, story_id: uuid.UUID, limit: int = 10) -> List[Dict[str, Any]]:
-        """
-        Gets comments for a story, ranked by a hotness score with Redis counters.
-        """
-        cache_key = f"story:{story_id}:ranked_comments"
-        try:
-            # Try Redis cache first
-            cached_comments = await redis.get(cache_key)
-            if cached_comments:
-                comments_list = json.loads(cached_comments)
-                
-                # Update like counts from Redis for real-time data
-                for comment in comments_list:
-                    comment_id = comment.get('comment_id')
-                    if comment_id:
-                        like_count_key = f"comment:{comment_id}:comment_like_count"
-                        like_count = await redis.get(like_count_key)
-                        if like_count:
-                            comment['comment_like_count'] = int(like_count.decode('utf-8'))
-                
-                logger.info(f"Retrieved {len(comments_list)} ranked comments from cache for story {story_id}")
-                return comments_list
-                
-        except Exception as e:
-            logger.warning(f"Error getting ranked comments from cache: {e}")
-
-        # Fallback to database with ranking query
-        ranking_query = text("""
-            SELECT c.comment_id, c.comment_text, c.user_id, c.created_at, c.comment_like_count,
-                   COUNT(r.comment_id) AS replies_count,
-                   ((c.comment_like_count * 2) + (COUNT(r.comment_id) * 3) + 
-                    (EXTRACT(EPOCH FROM (NOW() - c.created_at)) / -86400)) AS score
-            FROM comments c
-            LEFT JOIN comments r ON r.parent_comment_id = c.comment_id
-            WHERE c.story_id = :story_id AND c.parent_comment_id IS NULL
-            GROUP BY c.comment_id, c.comment_text, c.user_id, c.created_at, c.comment_like_count
-            ORDER BY score DESC
-            LIMIT :limit;
-        """)
+        if parent_comment_id and not db.query(Comment).filter(Comment.comment_id == parent_comment_id).first():
+            raise HTTPException(status_code=404, detail='WRONG PARENT ID')
 
         try:
-            result = db.execute(ranking_query, {"story_id": story_id, "limit": limit}).fetchall()
-            
-            comments = []
-            for row in result:
-                row_dict = dict(row._mapping)
-                
-                # Convert UUIDs to strings for JSON serialization
-                row_dict['comment_id'] = str(row_dict['comment_id'])
-                row_dict['user_id'] = str(row_dict['user_id'])
-                row_dict['created_at'] = row_dict['created_at'].isoformat()
-                
-                # Get real-time like count from Redis
-                comment_id = row_dict['comment_id']
-                like_count_key = f"comment:{comment_id}:comment_like_count"
-                try:
-                    like_count = await redis.get(like_count_key)
-                    if like_count:
-                        row_dict['comment_like_count'] = int(like_count.decode('utf-8'))
-                except Exception as e:
-                    logger.warning(f"Failed to get like count from Redis for comment {comment_id}: {e}")
-                
-                comments.append(row_dict)
+            new_comment_id = uuid.uuid4()
+            now = datetime.now(timezone.utc)
 
-            # Cache the result for 5 minutes
-            try:
-                await redis.set(cache_key, json.dumps(comments, default=str), ex=300)
-                logger.info(f"Cached {len(comments)} ranked comments for story {story_id}")
-            except Exception as e:
-                logger.warning(f"Failed to cache ranked comments: {e}")
+            comment_text = comment_data["comment_text"]
+            is_story_comment = story_id is not None
+            comment_text_html = CommentService._linkify_timestamps(comment_text, is_story_comment)
 
-            return comments
-            
-        except Exception as e:
-            logger.error(f"Error getting ranked comments from DB: {e}", exc_info=True)
-            return []
-
-    @staticmethod
-    async def get_comment_replies(redis: Redis, db: Session, parent_comment_id: uuid.UUID, limit: int = 20) -> List[Dict[str, Any]]:
-        """Get replies for a specific comment"""
-        try:
-            # First try to get reply IDs from Redis
-            parent_key = f"comment:{parent_comment_id}:replies"
-            reply_ids = await redis.lrange(parent_key, 0, limit - 1)
-            
-            replies = []
-            
-            if reply_ids:
-                # Get reply data from Redis
-                for reply_id_bytes in reply_ids:
-                    reply_id = reply_id_bytes.decode('utf-8')
-                    reply_data = await CommentService.get_comment_from_redis(redis, reply_id)
-                    if reply_data:
-                        replies.append(reply_data)
-            
-            # If no replies in Redis, fallback to database
-            if not replies:
-                db_replies = db.query(Comment).filter(
-                    Comment.parent_comment_id == parent_comment_id
-                ).order_by(Comment.created_at.asc()).limit(limit).all()
-                
-                for reply in db_replies:
-                    reply_dict = {
-                        'comment_id': str(reply.comment_id),
-                        'user_id': str(reply.user_id),
-                        'comment_text': reply.comment_text,
-                        'created_at': reply.created_at.isoformat() if reply.created_at else None,
-                        'updated_at': reply.updated_at.isoformat() if reply.updated_at else None,
-                        'parent_comment_id': str(reply.parent_comment_id),
-                        'comment_like_count': reply.comment_like_count or 0
-                    }
-                    
-                    # Get real-time like count from Redis
-                    like_count_key = f"comment:{reply.comment_id}:comment_like_count"
-                    try:
-                        like_count = await redis.get(like_count_key)
-                        if like_count:
-                            reply_dict['comment_like_count'] = int(like_count.decode('utf-8'))
-                    except Exception as e:
-                        logger.warning(f"Failed to get Redis like count for reply {reply.comment_id}: {e}")
-                    
-                    replies.append(reply_dict)
-            
-            return replies
-            
-        except Exception as e:
-            logger.error(f"Error getting comment replies: {e}", exc_info=True)
-            return []
-
-    @staticmethod
-    async def delete_comment(redis: Redis, db: Session, comment_id: uuid.UUID, user_id: uuid.UUID) -> bool:
-        """Delete a comment (only by the author)"""
-        try:
-            # Check if comment exists and belongs to user
-            comment = db.query(Comment).filter(
-                and_(Comment.comment_id == comment_id, Comment.user_id == user_id)
-            ).first()
-            
-            if not comment:
-                logger.warning(f"Comment {comment_id} not found or user {user_id} not authorized")
-                return False
-            
-            # Delete from database
-            db.delete(comment)
-            db.commit()
-            
-            # Remove from Redis
-            redis_key = f"comment:{comment_id}"
-            await redis.delete(redis_key)
-            
-            # Remove from sync queue if present
-            await redis.srem("comments:to_sync", str(comment_id))
-            
-            # Clear related cache
-            if comment.story_id:
-                cache_key = f"story:{comment.story_id}:ranked_comments"
-                await redis.delete(cache_key)
-            
-            logger.info(f"Successfully deleted comment {comment_id}")
-            return True
-            
-        except Exception as e:
-            db.rollback()
-            logger.error(f"Error deleting comment {comment_id}: {e}", exc_info=True)
-            return False
-
-    @staticmethod
-    async def update_comment(redis: Redis, db: Session, comment_id: uuid.UUID, user_id: uuid.UUID, new_text: str) -> Optional[Dict[str, Any]]:
-        """Update comment text (only by author)"""
-        try:
-            if not new_text.strip():
-                raise ValueError("Comment text cannot be empty")
-            
-            # Check if comment exists and belongs to user
-            comment = db.query(Comment).filter(
-                and_(Comment.comment_id == comment_id, Comment.user_id == user_id)
-            ).first()
-            
-            if not comment:
-                logger.warning(f"Comment {comment_id} not found or user {user_id} not authorized")
-                return None
-            
-            # Update in database
-            comment.comment_text = new_text.strip()
-            comment.updated_at = datetime.utcnow()
-            db.commit()
-            
-            # Update in Redis
-            redis_key = f"comment:{comment_id}"
-            comment_data = await redis.get(redis_key)
-            
-            if comment_data:
-                try:
-                    data_dict = json.loads(comment_data)
-                    data_dict['comment_text'] = new_text.strip()
-                    data_dict['updated_at'] = datetime.utcnow().isoformat()
-                    await redis.set(redis_key, json.dumps(data_dict), ex=86400)
-                except Exception as e:
-                    logger.warning(f"Failed to update comment in Redis: {e}")
-            
-            # Clear related cache
-            if comment.story_id:
-                cache_key = f"story:{comment.story_id}:ranked_comments"
-                await redis.delete(cache_key)
-            
-            logger.info(f"Successfully updated comment {comment_id}")
-            
-            # Return updated comment data
-            return {
-                'comment_id': str(comment.comment_id),
-                'comment_text': comment.comment_text,
-                'updated_at': comment.updated_at.isoformat(),
-                'user_id': str(comment.user_id)
+            full_comment_data = {
+                **comment_data,
+                "comment_id": new_comment_id,
+                "created_at": now,
+                "updated_at": now,
+                "comment_like_count": 0,
+                "replies_count": 0,
+                "comment_text_html": comment_text_html,
             }
+
+            pipe = redis.pipeline()
+
+            parent_type = "story" if story_id else "episode"
+            parent_id = str(story_id or episode_id)
             
+            pipe.hincrby(f"{parent_type}:{parent_id}", "comments_count", 1)
+            
+            comment_key = f"comments:{parent_type}:{parent_id}"
+            pipe.zadd(comment_key, {str(new_comment_id): 0})
+            pipe.expire(comment_key, 43200)
+
+            metadata_key = f"comment:{new_comment_id}"
+            
+            redis_safe_data = {}
+            for k, v in full_comment_data.items():
+                if v is None:
+                    redis_safe_data[k] = ""
+                elif isinstance(v, (str, int, float, bytes)):
+                    redis_safe_data[k] = v
+                else:
+                    redis_safe_data[k] = str(v)
+
+            pipe.hset(metadata_key, mapping=redis_safe_data)
+            pipe.expire(metadata_key, 43200)
+
+            if parent_comment_id:
+                pipe.hincrby(f"comment:{parent_comment_id}", "replies_count", 1)
+
+            await pipe.execute()
+
+            db_data = {
+                "comment_id": str(new_comment_id),
+                "story_id": str(story_id) if story_id else None,
+                "episode_id": str(episode_id) if episode_id else None,
+                "parent_comment_id": str(parent_comment_id) if parent_comment_id else None,
+                "user_id": str(full_comment_data["user_id"]),
+                "comment_text": full_comment_data["comment_text"],
+                "created_at": now.isoformat(),
+                "updated_at": now.isoformat(),
+            }
+            # Add to Redis queue for batch DB write
+            await redis.rpush("comments:db_queue", json.dumps(db_data))
+            
+            # Check queue size and trigger batch save if it reaches 50
+            queue_size = await redis.llen("comments:db_queue")
+            if queue_size >= 50:
+                from ..tasks import batch_save_comments_to_db
+                batch_save_comments_to_db.delay()
+
+            await pipe.execute()
+
+            return full_comment_data
+
         except Exception as e:
-            db.rollback()
-            logger.error(f"Error updating comment {comment_id}: {e}", exc_info=True)
-            return None
+            raise HTTPException(status_code=500, detail=f"Error processing comment: {e}")
 
     @staticmethod
-    async def get_user_comments(redis: Redis, db: Session, user_id: uuid.UUID, skip: int = 0, limit: int = 20) -> List[Dict[str, Any]]:
-        """Get comments by a specific user with real-time counters"""
+    async def get_ranked_comments(db: Session, redis: Redis, story_id: Optional[uuid.UUID] = None, episode_id: Optional[uuid.UUID] = None, limit: int = 50) -> List[Dict[str, Any]]:
+        """
+        Gets ranked comments from Redis, with a database fallback (cache-aside).
+        If comments are not in Redis, it fetches them from the DB, repopulates the cache,
+        and sets a 12-hour TTL.
+        """
+        is_story_comment = story_id is not None
+        parent_type = "story" if story_id else "episode"
+        parent_id = str(story_id or episode_id)
+        parent_key = f"comments:{parent_type}:{parent_id}"
+
+        # 1. Try to fetch from Redis
         try:
-            comments = db.query(Comment).filter(
-                Comment.user_id == user_id
-            ).order_by(Comment.created_at.desc()).offset(skip).limit(limit).all()
-            
-            result = []
-            for comment in comments:
-                comment_dict = {
-                    'comment_id': str(comment.comment_id),
-                    'story_id': str(comment.story_id) if comment.story_id else None,
-                    'episode_id': str(comment.episode_id) if comment.episode_id else None,
-                    'parent_comment_id': str(comment.parent_comment_id) if comment.parent_comment_id else None,
-                    'comment_text': comment.comment_text,
-                    'created_at': comment.created_at.isoformat() if comment.created_at else None,
-                    'updated_at': comment.updated_at.isoformat() if comment.updated_at else None,
-                    'comment_like_count': comment.comment_like_count or 0
+            comment_ids_with_scores = await redis.zrevrange(parent_key, 0, limit - 1, withscores=True)
+
+            if comment_ids_with_scores:
+                pipe = redis.pipeline()
+                for comment_id, score in comment_ids_with_scores:
+                    pipe.hgetall(f"comment:{comment_id.decode()}")
+                
+                comment_hashes = await pipe.execute()
+
+                results = []
+                for (comment_id, score), comment_hash in zip(comment_ids_with_scores, comment_hashes):
+                    if not comment_hash:
+                        continue  # Skip if a comment hash is missing
+                    
+                    decoded_hash = {k.decode(): v.decode() for k, v in comment_hash.items()}
+                    decoded_hash['score'] = score
+                    decoded_hash['comment_like_count'] = int(decoded_hash.get('comment_like_count', 0))
+                    decoded_hash['replies_count'] = int(decoded_hash.get('replies_count', 0))
+                    decoded_hash['comment_text_html'] = CommentService._linkify_timestamps(decoded_hash['comment_text'], is_story_comment)
+                    results.append(decoded_hash)
+                
+                if results:
+                    return results
+        except Exception:
+            # Could be a Redis connection error, proceed to DB fallback
+            pass
+
+        # 2. Fallback to DB if Redis is empty or fails
+        db_comments = CommentService.get_ranked_comments_from_db(db, story_id=story_id, episode_id=episode_id, limit=limit)
+
+        if not db_comments:
+            return []
+
+        # 3. Repopulate Redis
+        try:
+            pipe = redis.pipeline()
+            for comment in db_comments:
+                comment_id = str(comment["comment_id"])
+                metadata_key = f"comment:{comment_id}"
+                
+                redis_safe_data = {
+                    k: str(v) if v is not None else "" for k, v in comment.items()
                 }
                 
-                # Get real-time like count from Redis
-                like_count_key = f"comment:{comment.comment_id}:comment_like_count"
-                try:
-                    like_count = await redis.get(like_count_key)
-                    if like_count:
-                        comment_dict['comment_like_count'] = int(like_count.decode('utf-8'))
-                except Exception as e:
-                    logger.warning(f"Failed to get Redis like count for comment {comment.comment_id}: {e}")
-                
-                result.append(comment_dict)
-            
-            return result
-            
-        except Exception as e:
-            logger.error(f"Error getting user comments: {e}", exc_info=True)
-            return []
+                pipe.hset(metadata_key, mapping=redis_safe_data)
+                pipe.expire(metadata_key, 43200)  # 12h TTL
+
+                score = comment.get("comment_like_count", 0)
+                pipe.zadd(parent_key, {comment_id: score})
+
+            pipe.expire(parent_key, 43200)  # 12h TTL on the main set
+            await pipe.execute()
+        except Exception:
+            # If repopulation fails, we still serve from DB
+            pass
+
+        return db_comments
 
     @staticmethod
-    async def get_comment_stats(redis: Redis) -> Dict[str, Any]:
-        """Get statistics about comments"""
+    def get_ranked_comments_from_db(db: Session, story_id: Optional[uuid.UUID] = None, episode_id: Optional[uuid.UUID] = None, limit: int = 50) -> List[Dict[str, Any]]:
+        """
+        [DB-ONLY] Gets ranked comments from the database. For development/debugging.
+        """
+        is_story_comment = story_id is not None
+        query = db.query(Comment).filter(
+            (Comment.story_id == story_id) if story_id else (Comment.episode_id == episode_id),
+            Comment.parent_comment_id == None
+        ).order_by(desc(Comment.comment_like_count))
+        
+        comments = query.limit(limit).all()
+        return [CommentService._format_db_comment(db, c, is_story_comment) for c in comments]
+
+    @staticmethod
+    def _format_db_comment(db: Session, comment: Comment, is_story_comment: bool) -> Dict[str, Any]:
+        """Helper to format a comment object from the DB."""
+        replies_count = db.query(Comment).filter(Comment.parent_comment_id == comment.comment_id).count()
+        comment_text_html = CommentService._linkify_timestamps(comment.comment_text, is_story_comment)
+        return {
+            "comment_id": comment.comment_id,
+            "story_id": comment.story_id,
+            "episode_id": comment.episode_id,
+            "parent_comment_id": comment.parent_comment_id,
+            "comment_text": comment.comment_text,
+            "comment_text_html": comment_text_html,
+            "user_id": comment.user_id,
+            "created_at": comment.created_at,
+            "updated_at": comment.updated_at,
+            "comment_like_count": comment.comment_like_count,
+            "replies_count": replies_count
+        }
+
+    @staticmethod
+    async def like_comment(redis: Redis, db: Session, comment_id: uuid.UUID, user_id: uuid.UUID) -> bool:
+        """Toggle comment like and update Redis engagement score"""
         try:
-            stats = {
-                "redis_comments": 0,
-                "pending_sync": 0,
-                "total_likes": 0
-            }
-            
-            # Count Redis comments
-            async for key in redis.scan_iter(match="comment:*", count=100):
-                key_str = key.decode('utf-8')
-                if ':replies' not in key_str and ':comment_like_count' not in key_str:
-                    stats["redis_comments"] += 1
-            
-            # Count pending sync
-            pending_sync = await redis.scard("comments:to_sync")
-            stats["pending_sync"] = pending_sync
-            
-            # Count like counters
-            async for key in redis.scan_iter(match="comment:*:comment_like_count", count=100):
-                try:
-                    like_count = await redis.get(key)
-                    if like_count:
-                        stats["total_likes"] += int(like_count.decode('utf-8'))
-                except Exception:
-                    continue
-            
-            return stats
-            
-        except Exception as e:
-            logger.error(f"Error getting comment stats: {e}")
-            return {"error": str(e)}
+            comment = db.query(Comment).filter(Comment.comment_id == comment_id).first()
+            if not comment:
+                raise HTTPException(status_code=404, detail="Comment not found")
+
+            existing_like = db.query(CommentLike).filter(
+                CommentLike.comment_id == comment_id,
+                CommentLike.user_id == user_id
+            ).first()
+
+            parent_type = "story" if comment.story_id else "episode"
+            parent_id = str(comment.story_id or comment.episode_id)
+            parent_key = f"comments:{parent_type}:{parent_id}"
+            comment_meta_key = f"comment:{comment_id}"
+
+            if existing_like:
+                db.delete(existing_like)
+                comment.comment_like_count = max(0, comment.comment_like_count - 1)
+                db.commit()
+                await redis.hincrby(comment_meta_key, "comment_like_count", -1)
+                await redis.zincrby(parent_key, -1, str(comment_id))
+                return False
+            else:
+                like = CommentLike(comment_id=comment_id, user_id=user_id)
+                db.add(like)
+                comment.comment_like_count += 1
+                db.commit()
+                await redis.hincrby(comment_meta_key, "comment_like_count", 1)
+                await redis.zincrby(parent_key, 1, str(comment_id))
+                return True
+        except IntegrityError:
+            db.rollback()
+            raise HTTPException(status_code=400, detail="Like operation failed due to a database error.")

@@ -106,6 +106,7 @@ class Settings(BaseSettings):
     home_categories_cache_key: str = Field(default="fastapi_cache:home_categories", description="Home categories cache key")
     home_series_cache_key: str = Field(default="fastapi_cache:home_series", description="Home series cache key")
     home_slideshow_cache_key: str = Field(default="fastapi_cache:home_slideshow", description="Home slideshow cache key")
+    all_comments_cache_key: str = Field(default="fastapi_cache:all_comments", description="All comments cache key")
 
     # Performance settings
     enable_compression: bool = Field(default=True, description="Enable cache compression")

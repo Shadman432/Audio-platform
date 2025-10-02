@@ -27,4 +27,10 @@ aiohttp==3.9.0   # ये dependency जरूरी है async ke liye
 # ✅ Performance enhancements
 orjson>=3.9.0  # Ultra-fast JSON serialization
 email-validator
-jinja2
+
+# Celery for background tasks
+celery[redis]
+
+# Templating
+Jinja2
+aiofiles

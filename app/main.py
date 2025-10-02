@@ -1,6 +1,7 @@
 # app/main.py - Updated with incremental sync
 
 from fastapi import FastAPI, HTTPException, Request
+from fastapi.encoders import jsonable_encoder
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.templating import Jinja2Templates
 from fastapi.responses import HTMLResponse, JSONResponse
@@ -9,6 +10,8 @@ from contextlib import asynccontextmanager
 import logging
 import asyncio
 import time
+import gzip
+import json
 
 from .routes import api_router
 from .database import create_tables, test_connection
@@ -23,6 +26,7 @@ from .services.cache_service import (
     refresh_home_categories_cache,
     refresh_home_series_cache,
     refresh_home_slideshow_cache,
+    refresh_all_comments_cache,
 )
 from .custom_json_response import CustomJSONResponse
 from .services.sync_service import SyncService # Import SyncService
@@ -76,6 +80,7 @@ async def lifespan(app: FastAPI):
     cache_service.register_hot_key(settings.home_categories_cache_key, refresh_home_categories_cache)
     cache_service.register_hot_key(settings.home_series_cache_key, refresh_home_series_cache)
     cache_service.register_hot_key(settings.home_slideshow_cache_key, refresh_home_slideshow_cache)
+    cache_service.register_hot_key(settings.all_comments_cache_key, refresh_all_comments_cache)
     
     # Warm up cache
     await cache_service.warm_up()
@@ -140,6 +145,56 @@ app.include_router(api_router, prefix="/api/v1")
 @app.get("/", response_class=HTMLResponse)
 def serve_index(request: Request):
     return templates.TemplateResponse("index.html", {"request": request})
+
+
+@app.get("/redis-viewer", response_class=HTMLResponse)
+async def serve_redis_viewer(request: Request):
+    """Serves the Redis viewer HTML page."""
+    return templates.TemplateResponse("redis_viewer.html", {"request": request})
+
+
+@app.get("/redis-data")
+async def get_redis_data():
+    """Fetches all keys and values from Redis, handling different data types and compression."""
+    redis = await get_redis()
+    keys = await redis.keys('*')
+    data = {}
+    for key in keys:
+        key_str = key.decode('utf-8', errors='ignore')
+        try:
+            key_type = await redis.type(key)
+            key_type_str = key_type.decode('utf-8')
+
+            value = None
+            if key_type_str == 'string':
+                value_bytes = await redis.get(key)
+                if value_bytes:
+                    try:
+                        decompressed = gzip.decompress(value_bytes)
+                        value = json.loads(decompressed.decode('utf-8'))
+                    except (gzip.BadGzipFile, OSError, json.JSONDecodeError):
+                        value = value_bytes.decode('utf-8', errors='ignore')
+            elif key_type_str == 'hash':
+                value_dict = await redis.hgetall(key)
+                value = {k.decode('utf-8', errors='ignore'): v.decode('utf-8', errors='ignore') for k, v in value_dict.items()}
+            elif key_type_str == 'list':
+                value_list = await redis.lrange(key, 0, -1)
+                value = [v.decode('utf-8', errors='ignore') for v in value_list]
+            elif key_type_str == 'set':
+                value_set = await redis.smembers(key)
+                value = {v.decode('utf-8', errors='ignore') for v in value_set}
+            elif key_type_str == 'zset':
+                value_zset = await redis.zrevrange(key, 0, -1, withscores=True)
+                value = {v.decode('utf-8', errors='ignore'): s for v, s in value_zset}
+            else:
+                value = f"Unsupported type: {key_type_str}"
+            
+            data[key_str] = value
+
+        except Exception as e:
+            data[key_str] = f"Error fetching value: {str(e)}"
+            
+    return JSONResponse(content=jsonable_encoder(data))
 
 
 @app.get("/health/detailed")
@@ -285,7 +340,7 @@ async def not_found_handler(request: Request, exc: HTTPException):
         status_code=404,
         content={
             "error": "Not Found",
-            "message": "The requested resource was not found",
+            "message": exc.detail if hasattr(exc, 'detail') and exc.detail else "The requested resource was not found",
             "path": str(request.url.path)
         }
     )

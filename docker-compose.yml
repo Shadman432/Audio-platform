@@ -22,6 +22,27 @@ services:
       - .:/app
     env_file:
       - .env
+  celery-worker:
+    build: .
+    command: celery -A app.celery_app worker --loglevel=info
+    volumes:
+      - .:/app
+    env_file:
+      - .env
+    depends_on:
+      - redis
+      - db
+
+  celery-beat:
+    build: .
+    command: celery -A app.celery_app beat --loglevel=info
+    volumes:
+      - .:/app
+    env_file:
+      - .env
+    depends_on:
+      - redis
+      - db
 
   redis:
     image: redis:latest

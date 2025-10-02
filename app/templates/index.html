@@ -919,30 +919,31 @@ async function addComment() {
   }
 }
 
-// Load comments
 async function loadComments() {
   if (!currentStoryId) return;
   
   try {
-    const res = await fetch(`${API_BASE}/comments/story/${currentStoryId}/ranked?limit=5`);
+    const res = await fetch(`${API_BASE}/comments/story/${currentStoryId}/ranked?limit=25`);
     const comments = await res.json();
     
     const container = document.getElementById("commentsList");
     
     if (!Array.isArray(comments) || comments.length === 0) {
-      container.innerHTML = '<div class="loading">No comments yet</div>';
+      container.innerHTML = '<div>No comments yet</div>';
       return;
     }
     
     container.innerHTML = "";
     
-    comments.forEach(comment => {
+    comments.forEach((comment, index) => {
+      const rankBadge = index < 10 ? `<span style="background:#4caf50;padding:2px 6px;border-radius:3px;font-size:10px;margin-right:5px;">🔥 Top ${index+1}</span>` : '';
+      
       const commentEl = document.createElement("div");
       commentEl.className = "comment-item";
       commentEl.innerHTML = `
-        <div class="comment-text">${comment.comment_text}</div>
+        <div class="comment-text">${rankBadge}${comment.comment_text}</div>
         <div class="comment-meta">
-          <span>User: ${comment.user_id.substring(0, 8)}...</span>
+          <span>User: ${comment.user_id.substring(0, 8)}... | ${new Date(comment.created_at).toLocaleDateString()}</span>
           <button class="comment-like-btn" onclick="likeComment('${comment.comment_id}', this)">
             ♡ ${comment.comment_like_count || 0}
           </button>
@@ -952,7 +953,6 @@ async function loadComments() {
     });
   } catch (err) {
     console.error("Failed to load comments:", err);
-    document.getElementById("commentsList").innerHTML = '<div class="loading">Error loading comments</div>';
   }
 }
 
