@@ -20,8 +20,15 @@ celery_app.conf.update(
     enable_utc=True,
 )
 
+celery_app.conf.beat_schedule = {
+    'batch-save-comments-every-5-minutes': {
+        'task': 'app.tasks.batch_save_comments_to_db',
+        'schedule': 30.0,  # 30 seconds for developing(afterwards 5 minutes)
+    },
+}
+
 # Optional: Autodiscover tasks in specified modules
-# celery_app.autodiscover_tasks(['app.tasks'])
+celery_app.autodiscover_tasks(['app.tasks'])
 
 # Example task (can be moved to app/tasks.py)
 @celery_app.task(name="example_task")

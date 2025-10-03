@@ -139,7 +139,7 @@ def home_slideshow_to_dict(hs: HomeSlideshow) -> Dict[str, Any]:
         "created_at": hs.created_at.isoformat() if hs.created_at else None,
     }
 
-def comment_to_dict(comment: Comment) -> Dict[str, Any]:
+def comment_to_dict(comment: Comment, replies_count: int = 0) -> Dict[str, Any]:
     return {
         "comment_id": str(comment.comment_id),
         "story_id": str(comment.story_id) if comment.story_id else None,
@@ -150,6 +150,7 @@ def comment_to_dict(comment: Comment) -> Dict[str, Any]:
         "comment_like_count": comment.comment_like_count,
         "created_at": comment.created_at.isoformat() if comment.created_at else None,
         "updated_at": comment.updated_at.isoformat() if comment.updated_at else None,
+        "replies_count": replies_count,
     }
 
 def comment_like_to_dict(comment_like: CommentLike) -> Dict[str, Any]:
@@ -215,7 +216,7 @@ def user_event_to_dict(user_event: UserEvent) -> Dict[str, Any]:
         "episode_id": str(user_event.episode_id) if user_event.episode_id else None,
         "group_id": str(user_event.group_id) if user_event.group_id else None,
         "genre_id": str(user_event.genre_id) if user_event.genre_id else None,
-        "subgenre_id": str(user_event.subgenre_id) if user_event.subgenre_id else None,
+        "subgenre_.py": str(user_event.subgenre_id) if user_event.subgenre_id else None,
         "category_id": str(user_event.category_id) if user_event.category_id else None,
         "level": user_event.level,
         "event_type": user_event.event_type,

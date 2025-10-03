@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Redis Viewer</title>
+    <style>
+        body { font-family: sans-serif; margin: 2em; }
+        table { border-collapse: collapse; width: 100%; }
+        th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }
+        th { background-color: #f2f2f2; }
+        .value-cell { max-width: 500px; overflow-x: auto; white-space: pre-wrap; word-wrap: break-word; }
+    </style>
+</head>
+<body>
+    <h1>Redis Cache Viewer</h1>
+    <button onclick="fetchData()">Refresh Data</button>
+    <table id="redis-data">
+        <thead>
+            <tr>
+                <th>Key</th>
+                <th>Value</th>
+            </tr>
+        </thead>
+        <tbody>
+            <!-- Data will be inserted here -->
+        </tbody>
+    </table>
+
+    <script>
+        async function fetchData() {
+            const tbody = document.querySelector('#redis-data tbody');
+            tbody.innerHTML = '<tr><td colspan="2">Loading...</td></tr>';
+            try {
+                const response = await fetch('/redis-data');
+                const data = await response.json();
+                tbody.innerHTML = '';
+                for (const [key, value] of Object.entries(data)) {
+                    const row = tbody.insertRow();
+                    const keyCell = row.insertCell();
+                    const valueCell = row.insertCell();
+                    keyCell.textContent = key;
+                    valueCell.innerHTML = `<pre class="value-cell">${JSON.stringify(value, null, 2)}</pre>`;
+                }
+            } catch (error) {
+                tbody.innerHTML = `<tr><td colspan="2">Error loading data: ${error}</td></tr>`;
+                console.error('Error fetching Redis data:', error);
+            }
+        }
+        // Fetch data on initial load
+        fetchData();
+    </script>
+</body>
+</html>

@@ -12,6 +12,7 @@ from .home_continue_watching import HomeContinueWatching
 from .stories_authors import StoriesAuthors
 from .episode_authors import EpisodeAuthors
 from .comment_likes import CommentLike
+from .shares import Share
 
 __all__ = [
     "Story",
@@ -27,5 +28,6 @@ __all__ = [
     "HomeContinueWatching",
     "StoriesAuthors",
     "EpisodeAuthors",
-    "CommentLike"
+    "CommentLike",
+    "Share"
 ]
