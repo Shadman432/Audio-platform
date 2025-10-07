@@ -60,14 +60,17 @@ async def lifespan(app: FastAPI):
         
 
     # Initialize OpenSearch
-    await SearchService.create_indexes_if_not_exist()
-    logger.info("OpenSearch indexes verified")
+    if settings.opensearch_enabled:
+        await SearchService.create_indexes_if_not_exist()
+        logger.info("OpenSearch indexes verified")
 
-    # ADD THIS BLOCK:
-    # Index existing data to OpenSearch
-    from .services.opensearch_service import opensearch_service
-    await opensearch_service.setup_complete_opensearch()
-    logger.info("OpenSearch data indexed successfully")
+        # ADD THIS BLOCK:
+        # Index existing data to OpenSearch
+        from .services.opensearch_service import opensearch_service
+        await opensearch_service.setup_complete_opensearch()
+        logger.info("OpenSearch data indexed successfully")
+    else:
+        logger.info("OpenSearch is disabled")
     
     # Start cache service
     await cache_service.startup()

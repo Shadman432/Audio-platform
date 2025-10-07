@@ -24,6 +24,8 @@ class OpenSearchService:
     @classmethod
     async def get_client(cls) -> Optional[AsyncOpenSearch]:
         """Get OpenSearch client with proper error handling"""
+        if not settings.opensearch_enabled:
+            return None
         if cls._opensearch_client is None:
             try:
                 cls._opensearch_client = AsyncOpenSearch(
@@ -53,6 +55,9 @@ class OpenSearchService:
     @classmethod
     async def create_indexes(cls):
         """Create OpenSearch indexes with proper field mappings for your metadata"""
+        if not settings.opensearch_enabled:
+            logger.warning("OpenSearch is disabled. Skipping index creation.")
+            return False
         client = await cls.get_client()
         if not client:
             logger.error("Cannot create indexes - OpenSearch not available")
@@ -279,6 +284,9 @@ class OpenSearchService:
     @classmethod
     async def index_all_data_from_db(cls):
         """Index all data directly from database to OpenSearch - THIS WILL SAVE YOUR DATA"""
+        if not settings.opensearch_enabled:
+            logger.warning("OpenSearch is disabled. Skipping indexing from DB.")
+            return False
         client = await cls.get_client()
         if not client:
             logger.error("OpenSearch client not available")
@@ -361,6 +369,8 @@ class OpenSearchService:
     @classmethod
     async def verify_indexing(cls):
         """Verify that data was actually indexed with all metadata"""
+        if not settings.opensearch_enabled:
+            return
         client = await cls.get_client()
         if not client:
             return
@@ -403,6 +413,8 @@ class OpenSearchService:
     @classmethod
     async def search_unified(cls, query: str, skip: int = 0, limit: int = 20) -> List[Dict[str, Any]]:
         """Search OpenSearch with real-time Redis counters - returns all your metadata"""
+        if not settings.opensearch_enabled:
+            return []
         client = await cls.get_client()
         if not client:
             return []
@@ -541,6 +553,9 @@ class OpenSearchService:
     @classmethod
     async def setup_complete_opensearch(cls):
         """Complete setup: create indexes and populate with ALL your data"""
+        if not settings.opensearch_enabled:
+            logger.warning("OpenSearch is disabled. Skipping complete setup.")
+            return False
         logger.info("Starting complete OpenSearch setup...")
         
         # Step 1: Create indexes

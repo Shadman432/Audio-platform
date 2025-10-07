@@ -139,7 +139,7 @@ def home_slideshow_to_dict(hs: HomeSlideshow) -> Dict[str, Any]:
         "created_at": hs.created_at.isoformat() if hs.created_at else None,
     }
 
-def comment_to_dict(comment: Comment, replies_count: int = 0) -> Dict[str, Any]:
+def comment_to_dict(comment: Comment) -> Dict[str, Any]:
     return {
         "comment_id": str(comment.comment_id),
         "story_id": str(comment.story_id) if comment.story_id else None,
@@ -150,7 +150,7 @@ def comment_to_dict(comment: Comment, replies_count: int = 0) -> Dict[str, Any]:
         "comment_like_count": comment.comment_like_count,
         "created_at": comment.created_at.isoformat() if comment.created_at else None,
         "updated_at": comment.updated_at.isoformat() if comment.updated_at else None,
-        "replies_count": replies_count,
+        "replies_count": comment.reply_count,
     }
 
 def comment_like_to_dict(comment_like: CommentLike) -> Dict[str, Any]:

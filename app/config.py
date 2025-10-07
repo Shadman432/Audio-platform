@@ -74,6 +74,7 @@ class Settings(BaseSettings):
     # =============================
     # OpenSearch Configuration
     # =============================
+    opensearch_enabled: bool = Field(default=False, description="Enable OpenSearch integration")
     opensearch_url: str = Field(default="https://opensearch:9200", description="OpenSearch URL")
     opensearch_username: str = Field(default="admin", description="OpenSearch username")
     opensearch_password: str = Field(default="admin", description="OpenSearch password")

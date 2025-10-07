@@ -20,11 +20,29 @@ celery_app.conf.update(
     enable_utc=True,
 )
 
+# Schedule periodic tasks
 celery_app.conf.beat_schedule = {
     'batch-save-comments-every-5-minutes': {
         'task': 'app.tasks.batch_save_comments_to_db',
-        'schedule': 30.0,  # 30 seconds for developing(afterwards 5 minutes)
+        'schedule': 30.0,
     },
+    'sync-comment-likes-every-30-seconds': {  # NEW
+        'task': 'app.tasks.batch_sync_comment_likes',
+        'schedule': 30.0,  # 30 seconds
+    },
+     'batch-update-reply-counts-every-10-seconds': {
+        'task': 'app.tasks.batch_update_reply_counts',
+        'schedule': 10.0,
+    },
+    'batch-update-comment-visibility-every-20-seconds': {  # 👈 ADD THIS
+        'task': 'app.tasks.batch_update_comment_visibility',
+        'schedule': 20.0,  # har 20 seconds me chale
+    },
+    'batch-update-edited-comments-every-10-seconds': {
+        'task': 'app.tasks.batch_update_edited_comments',
+        'schedule': 10.0,
+    },
+
 }
 
 # Optional: Autodiscover tasks in specified modules

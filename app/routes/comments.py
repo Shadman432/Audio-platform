@@ -26,6 +26,7 @@ class CommentCreate(CommentBase):
 class CommentUpdate(BaseModel):
     comment_text: Optional[str] = None
 
+
 class CommentResponse(BaseModel):
     comment_id: uuid.UUID
     story_id: Optional[uuid.UUID] = None
@@ -36,6 +37,20 @@ class CommentResponse(BaseModel):
     created_at: datetime
     updated_at: datetime
     comment_like_count: int
+    is_edited: bool
+    is_visible: bool
+    is_reply: bool
+
+
+class EditCommentResponse(BaseModel):
+    message: str
+    comment: CommentResponse
+
+class ToggleLikeResponse(BaseModel):
+    liked: bool
+    message: str
+    user_id: uuid.UUID
+    comment_like_id: Optional[uuid.UUID] = None
 
 class RankedCommentResponse(BaseModel):
     comment_id: uuid.UUID
@@ -65,7 +80,31 @@ async def create_comment(
     created_comment = await CommentService.add_comment(db, redis, comment_data)
     return created_comment
 
-@router.post("/{comment_id}/like", status_code=204)
+@router.put("/{comment_id}", response_model=EditCommentResponse)
+async def edit_comment(
+    comment_id: uuid.UUID,
+    comment_update: CommentUpdate,
+    db: Session = Depends(get_db),
+    redis: Redis = Depends(get_redis),
+    user_id: str = Depends(get_user_id_from_token)
+):
+    """Edit a comment for authenticated user"""
+    response_data = await CommentService.edit_comment(
+        db, redis, comment_id, uuid.UUID(user_id), comment_update.comment_text
+    )
+    return response_data
+
+@router.put("/{comment_id}/visibility", response_model=dict)
+async def update_comment_visibility(
+    comment_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    redis: Redis = Depends(get_redis),
+    user_id: str = Depends(get_user_id_from_token)
+):
+    """Update comment visibility for authenticated user"""
+    return await CommentService.update_comment_visibility(db, redis, comment_id, uuid.UUID(user_id))
+
+@router.post("/{comment_id}/like", response_model=ToggleLikeResponse)
 async def like_comment(
     comment_id: uuid.UUID,
     db: Session = Depends(get_db),
@@ -73,8 +112,7 @@ async def like_comment(
     user_id: str = Depends(get_user_id_from_token)
 ):
     """Like a comment"""
-    await CommentService.like_comment(redis, db, comment_id, uuid.UUID(user_id))
-    return
+    return await CommentService.like_comment(redis, db, comment_id, uuid.UUID(user_id))
 
 # Public endpoints
 

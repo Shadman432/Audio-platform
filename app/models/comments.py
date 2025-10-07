@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Text, DateTime, ForeignKey, CheckConstraint, Integer, Index
+from sqlalchemy import Column, Text, DateTime, ForeignKey, CheckConstraint, Integer, Index, Boolean, Computed
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.sql import func
 from sqlalchemy.orm import relationship
@@ -24,7 +24,11 @@ class Comment(Base):
     parent_comment_id = Column(UUIDType, ForeignKey("comments.comment_id", ondelete="CASCADE"))
 
     comment_text = Column(Text, nullable=False)
+    is_reply = Column(Boolean, Computed("parent_comment_id IS NOT NULL"))
     comment_like_count = Column(Integer, default=0)
+    reply_count = Column(Integer, default=0, nullable=False)
+    is_edited = Column(Boolean, default=False, nullable=False)
+    is_visible = Column(Boolean, default=True, nullable=False)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
@@ -33,6 +37,7 @@ class Comment(Base):
             "(story_id IS NOT NULL AND episode_id IS NULL) OR (story_id IS NULL AND episode_id IS NOT NULL)",
             name="one_parent"
         ),
+        CheckConstraint("comment_like_count >= 0", name="comment_like_count_non_negative"),
         Index('idx_comments_story_id_created_at', 'story_id', func.desc('created_at')),
         Index('idx_comments_comment_like_count_desc', func.desc('comment_like_count')),
         Index('idx_comments_episode_id', 'episode_id'),
