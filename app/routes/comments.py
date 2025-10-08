@@ -52,6 +52,10 @@ class ToggleLikeResponse(BaseModel):
     user_id: uuid.UUID
     comment_like_id: Optional[uuid.UUID] = None
 
+class PinCommentResponse(BaseModel):
+    message: str
+    is_pinned: bool
+
 class RankedCommentResponse(BaseModel):
     comment_id: uuid.UUID
     comment_text: str
@@ -103,6 +107,18 @@ async def update_comment_visibility(
 ):
     """Update comment visibility for authenticated user"""
     return await CommentService.update_comment_visibility(db, redis, comment_id, uuid.UUID(user_id))
+
+
+@router.put("/{comment_id}/pin", response_model=PinCommentResponse)
+async def pin_unpin_comment(
+    comment_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    redis: Redis = Depends(get_redis),
+    user_id: str = Depends(get_user_id_from_token)
+):
+    """Pin or unpin a comment"""
+    return await CommentService.pin_unpin_comment(db, redis, comment_id, uuid.UUID(user_id))
+
 
 @router.post("/{comment_id}/like", response_model=ToggleLikeResponse)
 async def like_comment(

@@ -28,6 +28,7 @@ class Comment(Base):
     comment_like_count = Column(Integer, default=0)
     reply_count = Column(Integer, default=0, nullable=False)
     is_edited = Column(Boolean, default=False, nullable=False)
+    is_pinned = Column(Boolean, default=False)
     is_visible = Column(Boolean, default=True, nullable=False)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
